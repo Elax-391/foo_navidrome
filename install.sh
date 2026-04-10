@@ -1,8 +1,20 @@
 #!/bin/bash
 # Installs foo_navidrome to foobar2000 and produces a distributable .fb2k-component package.
 # Run after building in Xcode (Product > Build or Cmd+B).
+#
+# Usage:
+#   ./install.sh                  — build, install locally, package
+#   ./install.sh --new-release    — same, then create a GitHub release and upload the package
 
 set -euo pipefail
+
+NEW_RELEASE=false
+for arg in "$@"; do
+    case "$arg" in
+        --new-release) NEW_RELEASE=true ;;
+        *) echo "Unknown argument: $arg"; exit 1 ;;
+    esac
+done
 
 COMPONENT_NAME="foo_navidrome"
 BUILD_DIR="${HOME}/Library/Developer/Xcode/DerivedData"
@@ -77,3 +89,26 @@ echo "Preferences > Tools > Navidrome — enter your server URL and credentials.
 echo ""
 echo "To distribute: share ${COMPONENT_NAME}${VERSION_SUFFIX}.fb2k-component"
 echo "Users can install it by dragging it onto foobar2000 or double-clicking it."
+
+# ---------------------------------------------------------------------------
+# 5. (Optional) Create a GitHub release and upload the package
+# ---------------------------------------------------------------------------
+if [ "$NEW_RELEASE" = true ]; then
+    if [ -z "$VERSION" ]; then
+        echo "ERROR: Cannot create release — version_generated.h not found or empty."
+        exit 1
+    fi
+
+    TAG="v${VERSION}"
+    REPO="santiagorod92/${COMPONENT_NAME}"
+
+    echo ""
+    echo "Creating GitHub release ${TAG} on ${REPO}…"
+
+    GH_TOKEN="" gh release create "$TAG" "$OUTPUT" \
+        --repo "$REPO" \
+        --title "$TAG" \
+        --notes "See [README](https://github.com/${REPO}#readme) for installation instructions."
+
+    echo "Release published: https://github.com/${REPO}/releases/tag/${TAG}"
+fi

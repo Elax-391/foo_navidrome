@@ -144,6 +144,11 @@ Pull requests are welcome! Areas where help is especially appreciated:
 - Playlist management improvements (e.g. create named playlist per artist)
 - Offline/caching support
 
+## Uploading new release
+```bash
+gh release create <VERSION> foo_navidrome_<VERSION>.fb2k-component --title "<VERSION>" --notes "Release Notes" --repo <ORG_NAME>/foo_navidrome
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE) file.
