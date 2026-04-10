@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Xcode
+*.xcuserstate
+xcuserdata/
+**/xcuserdata/
+DerivedData/
+*.xccheckout
+*.moved-aside
+*.xcarchive
+*.xcresult
+*.hmap
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+**/Debug/
+**/Release/
+**/x64/
+**/x86/
+*.pdb
+*.obj
+*.exp
+*.ilk
+*.iobj
+*.ipdb
+
+# Auto-generated version header (created by Xcode build phase)
+version_generated.h
+
+# Build output
+*.component
+*.dll
+*.fb2k-component
+build/

@@ -1,0 +1,430 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		FE0BAD200000000000000001 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD020000000000000001 /* main.cpp */; };
+		FE0BAD210000000000000001 /* SubsonicClient.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD050000000000000001 /* SubsonicClient.mm */; };
+		FE0BAD220000000000000001 /* NavidromePlugin.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD060000000000000001 /* NavidromePlugin.mm */; };
+		FE0BAD230000000000000001 /* NavidromeBrowserController.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD080000000000000001 /* NavidromeBrowserController.mm */; };
+		FE0BAD240000000000000001 /* NavidromePreferencesController.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD0A0000000000000001 /* NavidromePreferencesController.mm */; };
+		FE0BAD250000000000000001 /* NSView+embed.m in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD0C0000000000000001 /* NSView+embed.m */; };
+		FE0BAD260000000000000001 /* NavidromeArtExtractor.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD0E0000000000000001 /* NavidromeArtExtractor.mm */; };
+		FE0BAD300000000000000001 /* libfoobar2000_component_client.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD140000000000000001 /* libfoobar2000_component_client.a */; };
+		FE0BAD310000000000000001 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD150000000000000001 /* Cocoa.framework */; };
+		FE0BAD320000000000000001 /* libshared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD130000000000000001 /* libshared.a */; };
+		FE0BAD330000000000000001 /* libfoobar2000_SDK.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD100000000000000001 /* libfoobar2000_SDK.a */; };
+		FE0BAD340000000000000001 /* libfoobar2000_SDK_helpers.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD110000000000000001 /* libfoobar2000_SDK_helpers.a */; };
+		FE0BAD350000000000000001 /* libpfc-Mac.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD120000000000000001 /* libpfc-Mac.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		FE0BAD010000000000000001 /* foo_navidrome.component */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = foo_navidrome.component; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE0BAD020000000000000001 /* main.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
+		FE0BAD030000000000000001 /* stdafx.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = stdafx.h; sourceTree = "<group>"; };
+		FE0BAD040000000000000001 /* SubsonicClient.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SubsonicClient.h; sourceTree = "<group>"; };
+		FE0BAD050000000000000001 /* SubsonicClient.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = SubsonicClient.mm; sourceTree = "<group>"; };
+		FE0BAD060000000000000001 /* NavidromePlugin.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NavidromePlugin.mm; sourceTree = "<group>"; };
+		FE0BAD070000000000000001 /* NavidromeBrowserController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NavidromeBrowserController.h; sourceTree = "<group>"; };
+		FE0BAD080000000000000001 /* NavidromeBrowserController.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NavidromeBrowserController.mm; sourceTree = "<group>"; };
+		FE0BAD090000000000000001 /* NavidromePreferencesController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NavidromePreferencesController.h; sourceTree = "<group>"; };
+		FE0BAD0A0000000000000001 /* NavidromePreferencesController.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NavidromePreferencesController.mm; sourceTree = "<group>"; };
+		FE0BAD0B0000000000000001 /* NSView+embed.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSView+embed.h"; sourceTree = "<group>"; };
+		FE0BAD0C0000000000000001 /* NSView+embed.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSView+embed.m"; sourceTree = "<group>"; };
+		FE0BAD0D0000000000000001 /* foobar2000-mac-class-suffix.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "foobar2000-mac-class-suffix.h"; sourceTree = "<group>"; };
+		FE0BAD0E0000000000000001 /* NavidromeArtExtractor.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NavidromeArtExtractor.mm; sourceTree = "<group>"; };
+		FE0BAD100000000000000001 /* libfoobar2000_SDK.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libfoobar2000_SDK.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE0BAD110000000000000001 /* libfoobar2000_SDK_helpers.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libfoobar2000_SDK_helpers.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE0BAD120000000000000001 /* libpfc-Mac.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = "libpfc-Mac.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE0BAD130000000000000001 /* libshared.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libshared.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE0BAD140000000000000001 /* libfoobar2000_component_client.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libfoobar2000_component_client.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE0BAD150000000000000001 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		FE0BAD4A0000000000000001 /* Generate Version Header */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate Version Header";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/version_generated.h",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "VERSION=\"${MARKETING_VERSION:-1.0}\"\nBUILD=$(git -C \"$SRCROOT\" rev-list --count HEAD 2>/dev/null)\nif [ -z \"$BUILD\" ] || [ \"$BUILD\" = \"0\" ]; then BUILD=\"${CURRENT_PROJECT_VERSION:-1}\"; fi\nprintf '#pragma once\\n#define COMPONENT_VERSION \"%s.%s\"\\n' \"$VERSION\" \"$BUILD\" > \"$SRCROOT/version_generated.h\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FE0BAD510000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FE0BAD300000000000000001 /* libfoobar2000_component_client.a in Frameworks */,
+				FE0BAD310000000000000001 /* Cocoa.framework in Frameworks */,
+				FE0BAD320000000000000001 /* libshared.a in Frameworks */,
+				FE0BAD330000000000000001 /* libfoobar2000_SDK.a in Frameworks */,
+				FE0BAD340000000000000001 /* libfoobar2000_SDK_helpers.a in Frameworks */,
+				FE0BAD350000000000000001 /* libpfc-Mac.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		FE0BAD400000000000000001 /* Root */ = {
+			isa = PBXGroup;
+			children = (
+				FE0BAD0D0000000000000001 /* foobar2000-mac-class-suffix.h */,
+				FE0BAD030000000000000001 /* stdafx.h */,
+				FE0BAD020000000000000001 /* main.cpp */,
+				FE0BAD040000000000000001 /* SubsonicClient.h */,
+				FE0BAD050000000000000001 /* SubsonicClient.mm */,
+				FE0BAD060000000000000001 /* NavidromePlugin.mm */,
+				FE0BAD0E0000000000000001 /* NavidromeArtExtractor.mm */,
+				FE0BAD430000000000000001 /* Mac */,
+				FE0BAD440000000000000001 /* helpers-mac */,
+				FE0BAD410000000000000001 /* Products */,
+				FE0BAD420000000000000001 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		FE0BAD410000000000000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FE0BAD010000000000000001 /* foo_navidrome.component */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FE0BAD420000000000000001 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				FE0BAD140000000000000001 /* libfoobar2000_component_client.a */,
+				FE0BAD150000000000000001 /* Cocoa.framework */,
+				FE0BAD130000000000000001 /* libshared.a */,
+				FE0BAD100000000000000001 /* libfoobar2000_SDK.a */,
+				FE0BAD110000000000000001 /* libfoobar2000_SDK_helpers.a */,
+				FE0BAD120000000000000001 /* libpfc-Mac.a */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		FE0BAD430000000000000001 /* Mac */ = {
+			isa = PBXGroup;
+			children = (
+				FE0BAD070000000000000001 /* NavidromeBrowserController.h */,
+				FE0BAD080000000000000001 /* NavidromeBrowserController.mm */,
+				FE0BAD090000000000000001 /* NavidromePreferencesController.h */,
+				FE0BAD0A0000000000000001 /* NavidromePreferencesController.mm */,
+			);
+			path = Mac;
+			sourceTree = "<group>";
+		};
+		FE0BAD440000000000000001 /* helpers-mac */ = {
+			isa = PBXGroup;
+			children = (
+				FE0BAD0B0000000000000001 /* NSView+embed.h */,
+				FE0BAD0C0000000000000001 /* NSView+embed.m */,
+			);
+			name = "helpers-mac";
+			path = "../helpers-mac";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		FE0BAD600000000000000001 /* foo_navidrome */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FE0BAD810000000000000001 /* Build configuration list for PBXNativeTarget "foo_navidrome" */;
+			buildPhases = (
+				FE0BAD4A0000000000000001 /* Generate Version Header */,
+				FE0BAD500000000000000001 /* Sources */,
+				FE0BAD510000000000000001 /* Frameworks */,
+				FE0BAD520000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = foo_navidrome;
+			productName = foo_navidrome;
+			productReference = FE0BAD010000000000000001 /* foo_navidrome.component */;
+			productType = "com.apple.product-type.bundle";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FE0BAD610000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					FE0BAD600000000000000001 = {
+						CreatedOnToolsVersion = 14.3.1;
+					};
+				};
+			};
+			buildConfigurationList = FE0BAD800000000000000001 /* Build configuration list for PBXProject "foo_navidrome" */;
+			compatibilityVersion = "Xcode 13.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = FE0BAD400000000000000001;
+			productRefGroup = FE0BAD410000000000000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FE0BAD600000000000000001 /* foo_navidrome */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FE0BAD520000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FE0BAD500000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FE0BAD200000000000000001 /* main.cpp in Sources */,
+				FE0BAD210000000000000001 /* SubsonicClient.mm in Sources */,
+				FE0BAD220000000000000001 /* NavidromePlugin.mm in Sources */,
+				FE0BAD230000000000000001 /* NavidromeBrowserController.mm in Sources */,
+				FE0BAD240000000000000001 /* NavidromePreferencesController.mm in Sources */,
+				FE0BAD250000000000000001 /* NSView+embed.m in Sources */,
+				FE0BAD260000000000000001 /* NavidromeArtExtractor.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		FE0BAD700000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = stdafx.h;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = (
+					..,
+					../..
+				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		FE0BAD710000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = stdafx.h;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = (
+					..,
+					../..
+				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		FE0BAD720000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Bundles";
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.santirod.foo-navidrome";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				WRAPPER_EXTENSION = component;
+			};
+			name = Debug;
+		};
+		FE0BAD730000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Bundles";
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.santirod.foo-navidrome";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				WRAPPER_EXTENSION = component;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		FE0BAD800000000000000001 /* Build configuration list for PBXProject "foo_navidrome" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FE0BAD700000000000000001 /* Debug */,
+				FE0BAD710000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FE0BAD810000000000000001 /* Build configuration list for PBXNativeTarget "foo_navidrome" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FE0BAD720000000000000001 /* Debug */,
+				FE0BAD730000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = FE0BAD610000000000000001 /* Project object */;
+}
