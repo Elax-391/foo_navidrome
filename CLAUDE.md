@@ -130,14 +130,13 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
   2. `release.yml` has an `if: failure()` step that uploads `/tmp/xcodebuild.log` as an artifact named `xcodebuild-log` (retention: 7 days), so anyone debugging can download and grep locally without scrolling through truncated GA logs.
   Don't switch to `xcpretty` or similar without preserving both layers — the diagnostic value when CI fails on a Mac build you can't reproduce locally is the whole point.
 
-- **SDK + pfc layout in CI.** `pfc/` is NOT a separate GitHub repo — `marc2k3/pfc` is a 404. The `marc2k3/foobar2000-sdk` bundle ships everything in a single checkout, but with a nested layout that mirrors the official SDK zip:
+- **SDK source in CI: `reupen/foobar2000-sdk-unmodified`, not `marc2k3/foobar2000-sdk`.** `pfc/` is NOT a separate GitHub repo — `marc2k3/pfc` is a 404. We tried `marc2k3/foobar2000-sdk` (redirects to `javascript-panel/foobar2000-sdk`) — it contains `SDK/`, `helpers/`, `shared/`, `foobar2000_component_client/`, plus `pfc/`/`libPPUI/`/`columns_ui-sdk/` at the staging root — BUT it does NOT ship `helpers-mac/`, which we need for `NSView+embed.m`. `reupen/foobar2000-sdk-unmodified` is an unmodified mirror of the official SDK and does include `helpers-mac/`. Layout the workflow expects after checkout into `_sdk-staging/`:
   ```
   _sdk-staging/
     foobar2000/                       ← nested wrapper, NOT the target layout
-      SDK/  helpers/  shared/  foobar2000_component_client/  helpers-mac/
+      SDK/  helpers/  helpers-mac/  shared/  foobar2000_component_client/
     pfc/
     libPPUI/
-    columns_ui-sdk/
-    README.md  sdk-license.txt  sdk-readme.html
+    sdk-license.txt  sdk-readme.html
   ```
-  The workflow's staging step moves `_sdk-staging/foobar2000/<dir>` → `foobar2000/<dir>` (note the SDK subdirs are one level deeper than the staging root) and `_sdk-staging/pfc` → `pfc` (this one IS at the staging root). The verify step prints `ls -la` of both `_sdk-staging` and `_sdk-staging/foobar2000` on failure so the next layout drift is debuggable.
+  The staging step moves `_sdk-staging/foobar2000/<dir>` → `foobar2000/<dir>` (SDK subdirs are one level deeper than the staging root) and `_sdk-staging/pfc` → `pfc` (this one IS at the staging root). The verify step requires `helpers-mac` in the list and prints `ls -la` of both `_sdk-staging` and `_sdk-staging/foobar2000` on failure so future layout drift is debuggable.

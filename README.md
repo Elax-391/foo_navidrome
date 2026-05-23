@@ -170,7 +170,7 @@ Pull requests are welcome! Areas where help is especially appreciated:
 
 Releases are automated. Every push to `main` triggers `.github/workflows/release.yml`, which:
 
-1. Lays out the sibling-directory tree the project expects (`pfc/`, `foobar2000/{SDK,helpers,shared,...}`) by cloning [marc2k3/foobar2000-sdk](https://github.com/marc2k3/foobar2000-sdk) and [marc2k3/pfc](https://github.com/marc2k3/pfc).
+1. Lays out the sibling-directory tree the project expects (`pfc/`, `foobar2000/{SDK,helpers,helpers-mac,shared,foobar2000_component_client}`) by cloning [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified) — an unmodified mirror of the official SDK that includes `helpers-mac/`.
 2. Runs [`semantic-release`](https://semantic-release.gitbook.io/) per `.releaserc.json`. semantic-release inspects commits since the last tag and decides whether a release is needed.
 3. If a release is needed:
    - `ci-build.sh <next-version>` pins `version.txt`, runs `xcodebuild -configuration Release`, ad-hoc signs, and packages `foo_navidrome_<version>.fb2k-component`.

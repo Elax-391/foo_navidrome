@@ -45,7 +45,10 @@ jobs:
       - name: Checkout foobar2000 SDK bundle
         uses: actions/checkout@v6
         with:
-          repository: marc2k3/foobar2000-sdk
+          # reupen/foobar2000-sdk-unmodified is the unmodified official SDK
+          # mirror; it includes helpers-mac/ which marc2k3/foobar2000-sdk
+          # (aka javascript-panel/foobar2000-sdk via redirect) does not ship.
+          repository: reupen/foobar2000-sdk-unmodified
           path: _sdk-staging
 
       - name: Move SDK subdirs into the expected sibling layout
@@ -68,8 +71,8 @@ jobs:
             echo "moved _sdk-staging/pfc -> pfc"
           fi
           # Verify everything we need is present before continuing
-          for d in foobar2000/SDK foobar2000/helpers foobar2000/shared \
-                   foobar2000/foobar2000_component_client pfc; do
+          for d in foobar2000/SDK foobar2000/helpers foobar2000/helpers-mac \
+                   foobar2000/shared foobar2000/foobar2000_component_client pfc; do
             if [ ! -d "$d" ]; then
               echo "ERROR: required dir '$d' not found after staging." >&2
               echo "Contents of _sdk-staging root:" >&2
