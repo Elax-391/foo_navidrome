@@ -118,7 +118,17 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 
 - **`dev-build.sh` vs `ci-build.sh` — keep them separate.** `dev-build.sh` is the local developer loop: bumps `version.txt`, builds, **installs locally** to `~/Library/foobar2000-v2/`, packages. `ci-build.sh` is for the GitHub Actions runner: receives the version as an arg (from semantic-release), builds into a hermetic `build/derived/` path, packages — and crucially does NOT touch `~/Library` (which on a runner would create a phantom dir). Don't merge them.
 
-- **`xcodebuild` log handling in CI.** Never truncate xcodebuild output with `| tail` — compile-command echoes scroll the actual `error:` lines off the top, so a failed PCH or single bad symbol shows up as just `** BUILD FAILED **` with no context. `ci-build.sh` redirects the full log to `/tmp/xcodebuild.log`, prints a filtered summary (`error:`/`warning:`/`note:`/`** BUILD`/`ld:`/`fatal:`/`FAILED`) on every run, and dumps the full log on failure. Don't switch to `xcpretty` or similar without preserving this fallback — the diagnostic value when CI fails on a Mac build you can't reproduce locally is the whole point.
+- **PCH compile fails on older Xcode with `std::string_view`/`std::string` errors.** `pfc/string-interface.h` uses `std::string` and `std::string_view` without `#include <string>` / `<string_view>` — it relies on transitive includes from libc++. On Xcode 26 + macOS 26 SDK those transitively land before pfc; on Xcode 15.4 + MacOSX14.5.sdk (the default on GitHub Actions `macos-14` runner) they do NOT, and the PCH compile of `stdafx.h` fails with two errors:
+  ```
+  pfc/string-interface.h:49: error: no type named 'string_view' in namespace 'std'
+  pfc/string-interface.h:50: error: implicit instantiation of undefined template 'std::basic_string<char>'
+  ```
+  Fix is to add `#include <string>` and `#include <string_view>` to `stdafx.h` BEFORE `<helpers/foobar2000+atl.h>` — this guarantees both types are complete regardless of the toolchain. Don't try to "fix" pfc upstream; we don't control that fork.
+
+- **`xcodebuild` log handling in CI.** Never truncate xcodebuild output with `| tail` — compile-command echoes scroll the actual `error:` lines off the top, so a failed PCH or single bad symbol shows up as just `** BUILD FAILED **` with no context. Two layers of observability:
+  1. `ci-build.sh` redirects the full log to `/tmp/xcodebuild.log`, prints a filtered summary (`error:`/`warning:`/`note:`/`** BUILD`/`ld:`/`fatal:`/`FAILED`) on every run. On failure it dumps the full log and then re-prints `grep -B 3 "error:|fatal error:"` at the very end — GitHub Actions step output is read bottom-up when a job fails, so error lines at the tail are what the eye lands on.
+  2. `release.yml` has an `if: failure()` step that uploads `/tmp/xcodebuild.log` as an artifact named `xcodebuild-log` (retention: 7 days), so anyone debugging can download and grep locally without scrolling through truncated GA logs.
+  Don't switch to `xcpretty` or similar without preserving both layers — the diagnostic value when CI fails on a Mac build you can't reproduce locally is the whole point.
 
 - **SDK + pfc layout in CI.** `pfc/` is NOT a separate GitHub repo — `marc2k3/pfc` is a 404. The `marc2k3/foobar2000-sdk` bundle ships everything in a single checkout, but with a nested layout that mirrors the official SDK zip:
   ```

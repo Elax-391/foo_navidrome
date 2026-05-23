@@ -52,10 +52,17 @@ set -e
 grep -E "error:|warning:|note:|\\*\\* BUILD|ld:|fatal:|FAILED" "$LOG" || true
 
 if [ $XCB_RC -ne 0 ]; then
-    echo "ci-build: xcodebuild failed (rc=$XCB_RC). Full log:"
-    echo "----- BEGIN xcodebuild log -----"
+    echo ""
+    echo "===== FULL xcodebuild log (rc=$XCB_RC) ====="
     cat "$LOG"
-    echo "----- END xcodebuild log -----"
+    echo ""
+    echo "===== ERROR LINES (rc=$XCB_RC) ====="
+    # Print error context: the error line + 3 lines before for context.
+    # GitHub Actions step output is read bottom-up when a job fails — putting
+    # this LAST means the user sees it without scrolling.
+    grep -B 3 -E "error:|fatal error:" "$LOG" || echo "(no error: lines found — search the full log above)"
+    echo ""
+    echo "===== END (xcodebuild rc=$XCB_RC) ====="
     exit $XCB_RC
 fi
 
