@@ -118,4 +118,14 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 
 - **`dev-build.sh` vs `ci-build.sh` — keep them separate.** `dev-build.sh` is the local developer loop: bumps `version.txt`, builds, **installs locally** to `~/Library/foobar2000-v2/`, packages. `ci-build.sh` is for the GitHub Actions runner: receives the version as an arg (from semantic-release), builds into a hermetic `build/derived/` path, packages — and crucially does NOT touch `~/Library` (which on a runner would create a phantom dir). Don't merge them.
 
-- **SDK + pfc layout in CI.** `pfc/` is NOT a separate GitHub repo — `marc2k3/pfc` is a 404. The `marc2k3/foobar2000-sdk` bundle ships `pfc/` as a top-level subdirectory alongside `SDK/`, `helpers/`, `shared/`, `foobar2000_component_client/`, `helpers-mac/`. The release workflow checks out the bundle into `_sdk-staging/` and moves each subdir into the expected sibling layout (`pfc/` goes to the workspace root; the rest under `foobar2000/`). If a required dir is missing after staging, the verify step prints `ls -la _sdk-staging` and fails — investigate from there before changing URLs.
+- **SDK + pfc layout in CI.** `pfc/` is NOT a separate GitHub repo — `marc2k3/pfc` is a 404. The `marc2k3/foobar2000-sdk` bundle ships everything in a single checkout, but with a nested layout that mirrors the official SDK zip:
+  ```
+  _sdk-staging/
+    foobar2000/                       ← nested wrapper, NOT the target layout
+      SDK/  helpers/  shared/  foobar2000_component_client/  helpers-mac/
+    pfc/
+    libPPUI/
+    columns_ui-sdk/
+    README.md  sdk-license.txt  sdk-readme.html
+  ```
+  The workflow's staging step moves `_sdk-staging/foobar2000/<dir>` → `foobar2000/<dir>` (note the SDK subdirs are one level deeper than the staging root) and `_sdk-staging/pfc` → `pfc` (this one IS at the staging root). The verify step prints `ls -la` of both `_sdk-staging` and `_sdk-staging/foobar2000` on failure so the next layout drift is debuggable.

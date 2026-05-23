@@ -51,11 +51,15 @@ jobs:
       - name: Move SDK subdirs into the expected sibling layout
         run: |
           set -euo pipefail
-          # SDK + Mac helpers + component client live under ./foobar2000/
+          # marc2k3/foobar2000-sdk ships its content under a nested foobar2000/
+          # subdir (mirroring the official SDK zip). SDK + helpers + shared +
+          # foobar2000_component_client + helpers-mac all live there.
+          # pfc, libPPUI, columns_ui-sdk are at the staging root.
+          SDK_INNER="_sdk-staging/foobar2000"
           for d in SDK helpers shared foobar2000_component_client helpers-mac; do
-            if [ -d "_sdk-staging/$d" ]; then
-              mv "_sdk-staging/$d" "foobar2000/$d"
-              echo "moved _sdk-staging/$d -> foobar2000/$d"
+            if [ -d "$SDK_INNER/$d" ]; then
+              mv "$SDK_INNER/$d" "foobar2000/$d"
+              echo "moved $SDK_INNER/$d -> foobar2000/$d"
             fi
           done
           # pfc lives at the workspace root (sibling of foobar2000/)
@@ -68,8 +72,10 @@ jobs:
                    foobar2000/foobar2000_component_client pfc; do
             if [ ! -d "$d" ]; then
               echo "ERROR: required dir '$d' not found after staging." >&2
-              echo "Contents of _sdk-staging (if it still exists):" >&2
+              echo "Contents of _sdk-staging root:" >&2
               ls -la _sdk-staging 2>/dev/null || true
+              echo "Contents of _sdk-staging/foobar2000:" >&2
+              ls -la _sdk-staging/foobar2000 2>/dev/null || true
               exit 1
             fi
           done
