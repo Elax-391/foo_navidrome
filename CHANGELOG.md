@@ -1,3 +1,19 @@
+## [1.1.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.0.1...v1.1.0) (2026-05-23)
+
+
+### Features
+
+* general project improvements ([a6c2d89](https://github.com/santiagorod92/foo_navidrome/commit/a6c2d8918f54531f388a27b65453d1c68854f9db))
+
+
+### Bug Fixes
+
+* buid step ([7572610](https://github.com/santiagorod92/foo_navidrome/commit/75726100ed43f7d339b60b69f49c0d2b32c74dfb))
+* build step again ([cd4bd8d](https://github.com/santiagorod92/foo_navidrome/commit/cd4bd8dfb939abfdc2770e0fd8b8dc6bf5f7ebd3))
+* ci build ([8243e9b](https://github.com/santiagorod92/foo_navidrome/commit/8243e9b4fa15539f23972177e1aac9b72e4f6496))
+* release action ([38a870c](https://github.com/santiagorod92/foo_navidrome/commit/38a870c090ab902b98b6df269f328b876aeaec8d))
+* release action issues ([e6fe420](https://github.com/santiagorod92/foo_navidrome/commit/e6fe42012d10852c35f2434983448155cf5915c7))
+
 # Changelog
 
 All notable changes to this project are documented here. The file is regenerated
