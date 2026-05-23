@@ -18,6 +18,8 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 - Album artwork displayed in Now Playing and playlists (fetched from Navidrome)
 - Credentials saved in foobar2000's config (persistent across restarts)
 - Test Connection button to verify server connectivity
+- **Native `navidrome://` URI scheme**: tracks added to playlists store a stable URI, not a transient HTTP URL — playlists survive credential rotation or server URL changes
+- Appears under **Preferences › Media Library › Library viewers** alongside Album List / Artist View
 
 ## Platform Support
 
@@ -64,6 +66,19 @@ The expected layout relative to `foo_navidrome/`:
 
 ### Build steps
 
+The fastest dev loop is `./dev-build.sh` — bumps the patch version in `version.txt`, runs `xcodebuild`, and installs to your local foobar2000:
+
+```bash
+./dev-build.sh              # bump patch + build + install
+./dev-build.sh --minor      # bump minor
+./dev-build.sh --no-bump    # rebuild + install at current version
+./dev-build.sh --no-install # build only
+```
+
+Restart foobar2000 after the script finishes to pick up the new version.
+
+If you prefer Xcode directly:
+
 1. Open `foo_navidrome.xcworkspace` in Xcode
 2. Select the **`foo_navidrome`** scheme (top-left scheme selector)
 3. Build: **Product › Build** or `Cmd+B`
@@ -82,11 +97,17 @@ The expected layout relative to `foo_navidrome/`:
 
 ### Usage
 
-- **File › Open Navidrome Browser** — opens the browser window
+Two ways to open the browser:
+- **File › Open Navidrome Browser**
+- **Preferences › Media Library › Library viewers › Navidrome › Activate**
+
+Then:
 - Expand an artist to see albums, expand an album to see songs
 - Select one or more items and click **Add to Playlist** or **Play Now**
 - Double-click a song to play it immediately
 - Use the search field to search across your library
+
+Tracks land in the playlist as `navidrome://track/<id>?...` URIs. The component resolves these to the current HTTP stream when playback starts, so your playlists keep working if you change credentials or move the server.
 
 ---
 
@@ -119,7 +140,8 @@ foo_navidrome/
 ├── stdafx.h                        # Shared precompiled header
 ├── SubsonicTypes.h                 # Shared pure-C++ data types
 ├── SubsonicClient.h/.mm            # macOS: ObjC Subsonic HTTP client
-├── NavidromePlugin.mm              # macOS: plugin registration, cfg vars, prefs, menu
+├── NavidromeInput.h/.mm            # macOS: input_singletrack handler for navidrome:// URIs
+├── NavidromePlugin.mm              # macOS: plugin registration, cfg vars, prefs, menu, library_viewer
 ├── NavidromeArtExtractor.mm        # macOS: album art fallback (album_art_fallback)
 ├── Mac/
 │   ├── NavidromeBrowserController.h/.mm    # macOS: NSWindowController browser UI
@@ -144,10 +166,40 @@ Pull requests are welcome! Areas where help is especially appreciated:
 - Playlist management improvements (e.g. create named playlist per artist)
 - Offline/caching support
 
-## Uploading new release
+## Releasing
+
+Releases are automated. Every push to `main` triggers `.github/workflows/release.yml`, which:
+
+1. Lays out the sibling-directory tree the project expects (`pfc/`, `foobar2000/{SDK,helpers,shared,...}`) by cloning [marc2k3/foobar2000-sdk](https://github.com/marc2k3/foobar2000-sdk) and [marc2k3/pfc](https://github.com/marc2k3/pfc).
+2. Runs [`semantic-release`](https://semantic-release.gitbook.io/) per `.releaserc.json`. semantic-release inspects commits since the last tag and decides whether a release is needed.
+3. If a release is needed:
+   - `ci-build.sh <next-version>` pins `version.txt`, runs `xcodebuild -configuration Release`, ad-hoc signs, and packages `foo_navidrome_<version>.fb2k-component`.
+   - `CHANGELOG.md` is updated.
+   - A `chore(release): <version> [skip ci]` commit lands on `main` with `version.txt` + `CHANGELOG.md`.
+   - A GitHub release is created with the `.fb2k-component` attached.
+
+### Commit message convention
+
+The pipeline reads [Conventional Commits](https://www.conventionalcommits.org/). The commit type determines whether (and how) the version is bumped:
+
+| Type                  | Effect          |
+| --------------------- | --------------- |
+| `feat: …`             | minor bump      |
+| `fix: …` / `perf: …`  | patch bump      |
+| `refactor: …`         | patch bump      |
+| `chore: …` / `docs: …` / `style: …` / `test: …` / `ci: …` | no release |
+| `feat!: …` or footer `BREAKING CHANGE:` | major bump |
+
+Versions are tracked in `version.txt` (consumed by the Xcode "Generate Version Header" build phase, which writes the gitignored `version_generated.h`).
+
+### Manual release (fallback)
+
 ```bash
-gh release create <VERSION> foo_navidrome_<VERSION>.fb2k-component --title "<VERSION>" --notes "Release Notes" --repo <ORG_NAME>/foo_navidrome
+# Build, install locally, package, and create a GitHub release in one shot
+./dev-build.sh --new-release
 ```
+
+This bypasses the workflow and uses the `--new-release` path of `install.sh`.
 
 ## License
 

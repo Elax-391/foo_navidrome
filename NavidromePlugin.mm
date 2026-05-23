@@ -4,6 +4,7 @@
 #import "Mac/NavidromePreferencesController.h"
 #include <helpers/advconfig_impl.h>
 #include <SDK/cfg_var.h>
+#include <SDK/library_manager.h>
 
 // ---------------------------------------------------------------------------
 // GUIDs — replace with your own when forking this component
@@ -15,6 +16,8 @@ static constexpr GUID guid_cfg_salt        = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xa
 static constexpr GUID guid_prefs_page      = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x05 } };
 static constexpr GUID guid_mainmenu_group  = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x06 } };
 static constexpr GUID guid_mainmenu_cmd    = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x07 } };
+static constexpr GUID guid_library_viewer  = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x08 } };
+static constexpr GUID guid_library_prefs   = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x09 } };
 
 // ---------------------------------------------------------------------------
 // Config variables (exported so SubsonicClient.mm can access them)
@@ -82,14 +85,51 @@ public:
 
     void execute(t_uint32 p_index, service_ptr_t<service_base> p_callback) override {
         if (p_index != 0) throw pfc::exception_invalid_params();
-        dispatch_async(dispatch_get_main_queue(), ^{
-            NavidromeBrowserController *browser = [NavidromeBrowserController sharedBrowser];
-            [browser showWindow:nil];
-            [browser.window makeKeyAndOrderFront:nil];
-        });
+        NavidromeShowStandaloneBrowser();
     }
 };
 
 FB2K_SERVICE_FACTORY(mainmenu_navidrome);
+
+// ---------------------------------------------------------------------------
+// Library viewer — exposes the browser to the foobar Media Library system.
+// On macOS the visible surface is the preferences sub-page below, registered
+// under guid_media_library, which mirrors how Album List / ReFacets show up.
+// ---------------------------------------------------------------------------
+
+class library_viewer_navidrome : public library_viewer {
+public:
+    GUID get_preferences_page() override { return guid_library_prefs; }
+    bool have_activate()        override { return true; }
+
+    void activate() override { NavidromeShowStandaloneBrowser(); }
+
+    GUID         get_guid() override { return guid_library_viewer; }
+    const char * get_name() override { return "Navidrome"; }
+};
+
+static library_viewer_factory_t<library_viewer_navidrome> g_library_viewer_navidrome_factory;
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Media Library preferences sub-page — embeds the browser directly so users
+// see Artists/Albums/Songs without opening a separate window. The page IS
+// the browser. A fresh NavidromeBrowserController is created per page mount.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class preferences_page_navidrome_library : public preferences_page {
+public:
+    service_ptr instantiate() override {
+        return fb2k::wrapNSObject([NavidromeBrowserController new]);
+    }
+    const char *get_name() override { return "Navidrome"; }
+    GUID get_guid() override { return guid_library_prefs; }
+    GUID get_parent_guid() override { return guid_media_library; }
+};
+
+FB2K_SERVICE_FACTORY(preferences_page_navidrome_library);
 
 } // namespace

@@ -14,6 +14,7 @@
 		FE0BAD240000000000000001 /* NavidromePreferencesController.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD0A0000000000000001 /* NavidromePreferencesController.mm */; };
 		FE0BAD250000000000000001 /* NSView+embed.m in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD0C0000000000000001 /* NSView+embed.m */; };
 		FE0BAD260000000000000001 /* NavidromeArtExtractor.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD0E0000000000000001 /* NavidromeArtExtractor.mm */; };
+		FE0BAD270000000000000001 /* NavidromeInput.mm in Sources */ = {isa = PBXBuildFile; fileRef = FE0BAD160000000000000001 /* NavidromeInput.mm */; };
 		FE0BAD300000000000000001 /* libfoobar2000_component_client.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD140000000000000001 /* libfoobar2000_component_client.a */; };
 		FE0BAD310000000000000001 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD150000000000000001 /* Cocoa.framework */; };
 		FE0BAD320000000000000001 /* libshared.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FE0BAD130000000000000001 /* libshared.a */; };
@@ -37,6 +38,8 @@
 		FE0BAD0C0000000000000001 /* NSView+embed.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSView+embed.m"; sourceTree = "<group>"; };
 		FE0BAD0D0000000000000001 /* foobar2000-mac-class-suffix.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "foobar2000-mac-class-suffix.h"; sourceTree = "<group>"; };
 		FE0BAD0E0000000000000001 /* NavidromeArtExtractor.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NavidromeArtExtractor.mm; sourceTree = "<group>"; };
+		FE0BAD0F0000000000000001 /* NavidromeInput.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NavidromeInput.h; sourceTree = "<group>"; };
+		FE0BAD160000000000000001 /* NavidromeInput.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NavidromeInput.mm; sourceTree = "<group>"; };
 		FE0BAD100000000000000001 /* libfoobar2000_SDK.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libfoobar2000_SDK.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		FE0BAD110000000000000001 /* libfoobar2000_SDK_helpers.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libfoobar2000_SDK_helpers.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		FE0BAD120000000000000001 /* libpfc-Mac.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = "libpfc-Mac.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -48,12 +51,14 @@
 /* Begin PBXShellScriptBuildPhase section */
 		FE0BAD4A0000000000000001 /* Generate Version Header */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/version.txt",
 			);
 			name = "Generate Version Header";
 			outputFileListPaths = (
@@ -63,7 +68,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "VERSION=\"${MARKETING_VERSION:-1.0}\"\nBUILD=$(git -C \"$SRCROOT\" rev-list --count HEAD 2>/dev/null)\nif [ -z \"$BUILD\" ] || [ \"$BUILD\" = \"0\" ]; then BUILD=\"${CURRENT_PROJECT_VERSION:-1}\"; fi\nprintf '#pragma once\\n#define COMPONENT_VERSION \"%s.%s\"\\n' \"$VERSION\" \"$BUILD\" > \"$SRCROOT/version_generated.h\"\n";
+			shellScript = "VERSION=$(cat \"$SRCROOT/version.txt\" 2>/dev/null | tr -d '[:space:]')\nif [ -z \"$VERSION\" ]; then VERSION=\"1.0.0\"; fi\nprintf '#pragma once\\n#define COMPONENT_VERSION \"%s\"\\n' \"$VERSION\" > \"$SRCROOT/version_generated.h\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -95,6 +100,8 @@
 				FE0BAD050000000000000001 /* SubsonicClient.mm */,
 				FE0BAD060000000000000001 /* NavidromePlugin.mm */,
 				FE0BAD0E0000000000000001 /* NavidromeArtExtractor.mm */,
+				FE0BAD0F0000000000000001 /* NavidromeInput.h */,
+				FE0BAD160000000000000001 /* NavidromeInput.mm */,
 				FE0BAD430000000000000001 /* Mac */,
 				FE0BAD440000000000000001 /* helpers-mac */,
 				FE0BAD410000000000000001 /* Products */,
@@ -219,6 +226,7 @@
 				FE0BAD240000000000000001 /* NavidromePreferencesController.mm in Sources */,
 				FE0BAD250000000000000001 /* NSView+embed.m in Sources */,
 				FE0BAD260000000000000001 /* NavidromeArtExtractor.mm in Sources */,
+				FE0BAD270000000000000001 /* NavidromeInput.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

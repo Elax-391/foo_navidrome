@@ -1,4 +1,5 @@
 #import "NavidromeBrowserController.h"
+#import "../NavidromeInput.h"
 #include <SDK/playlist.h>
 #include <SDK/metadb.h>
 #include <SDK/playable_location.h>
@@ -97,40 +98,25 @@ static NSString *formatDuration(NSTimeInterval secs) {
 
 @implementation NavidromeBrowserController
 
-+ (instancetype)sharedBrowser {
-    static NavidromeBrowserController *instance = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ instance = [NavidromeBrowserController new]; });
-    return instance;
-}
-
 - (instancetype)init {
-    NSRect frame = NSMakeRect(0, 0, 520, 600);
-    NSWindow *win = [[NSWindow alloc]
-                     initWithContentRect:frame
-                     styleMask:(NSWindowStyleMaskTitled |
-                                NSWindowStyleMaskClosable |
-                                NSWindowStyleMaskMiniaturizable |
-                                NSWindowStyleMaskResizable)
-                     backing:NSBackingStoreBuffered
-                     defer:NO];
-    win.title = @"Navidrome Browser";
-    win.minSize = NSMakeSize(360, 300);
-    [win center];
-
-    self = [super initWithWindow:win];
+    self = [super initWithNibName:nil bundle:nil];
     if (self) {
         _rootNodes     = [NSMutableArray array];
         _filteredNodes = [NSMutableArray array];
-        [self buildUI];
-        [self loadArtists];
     }
     return self;
 }
 
-- (void)buildUI {
-    NSView *content = self.window.contentView;
+- (void)loadView {
+    NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 520, 600)];
     content.wantsLayer = YES;
+    self.view = content;
+    [self buildUI];
+    [self loadArtists];
+}
+
+- (void)buildUI {
+    NSView *content = self.view;
 
     // ── Search field (top) ──────────────────────────────────────────────
     _searchField = [NSSearchField new];
@@ -476,19 +462,27 @@ static NSString *formatDuration(NSTimeInterval secs) {
         _statusLabel.stringValue = @"No songs selected";
         return;
     }
-    SubsonicClient *client = [SubsonicClient sharedClient];
-
-    // Build metadb handle list
+    // Build metadb handle list. Each item is identified by a navidrome://
+    // URI — our input handler resolves it to the current HTTP stream at
+    // decode time, so playlists survive credential / server URL changes.
     metadb_handle_list tracks;
     auto hintList = metadb_io_v2::get()->create_hint_list();
 
     for (NavidromeNode *node in songNodes) {
-        NSString *streamURL = [client streamURLForSongId:node.nodeId coverArtId:node.coverArtId ?: @""];
-        const char *urlCStr = [streamURL UTF8String];
+        NSString *uri = NavidromeMakeTrackURIWithFields(node.nodeId,
+                                                        node.displayName,
+                                                        node.subtitle,
+                                                        node.albumName,
+                                                        node.trackNumber,
+                                                        node.year,
+                                                        node.duration,
+                                                        node.coverArtId ?: @"",
+                                                        @"");
+        if (!uri) continue;
 
         metadb_handle_ptr handle;
         playable_location_impl loc;
-        loc.set_path(urlCStr);
+        loc.set_path([uri UTF8String]);
         loc.set_subsong(0);
         metadb::get()->handle_create(handle, loc);
         tracks += handle;
@@ -652,3 +646,51 @@ static NSString *formatDuration(NSTimeInterval secs) {
 }
 
 @end
+
+// ---------------------------------------------------------------------------
+// Standalone window wrapper for the File menu and library_viewer.activate().
+// Each call creates a fresh browser controller and wraps it in an NSWindow.
+// The window+controller pair is retained in a static set until the window
+// closes, at which point it's released. Multiple windows can coexist.
+// ---------------------------------------------------------------------------
+
+@interface NavidromeBrowserWindowOwner : NSObject <NSWindowDelegate>
+@property (nonatomic, strong) NSWindow *window;
+@property (nonatomic, strong) NavidromeBrowserController *vc;
+@end
+
+static NSMutableSet<NavidromeBrowserWindowOwner *> *gStandaloneOwners = nil;
+
+@implementation NavidromeBrowserWindowOwner
+- (void)windowWillClose:(NSNotification *)note {
+    [gStandaloneOwners removeObject:self];
+}
+@end
+
+void NavidromeShowStandaloneBrowser(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!gStandaloneOwners) gStandaloneOwners = [NSMutableSet set];
+
+        NavidromeBrowserWindowOwner *owner = [NavidromeBrowserWindowOwner new];
+        owner.vc = [NavidromeBrowserController new];
+
+        NSWindow *win = [[NSWindow alloc]
+                         initWithContentRect:NSMakeRect(0, 0, 520, 600)
+                         styleMask:(NSWindowStyleMaskTitled |
+                                    NSWindowStyleMaskClosable |
+                                    NSWindowStyleMaskMiniaturizable |
+                                    NSWindowStyleMaskResizable)
+                         backing:NSBackingStoreBuffered
+                         defer:NO];
+        win.title = @"Navidrome Browser";
+        win.minSize = NSMakeSize(360, 300);
+        win.releasedWhenClosed = NO;
+        win.contentViewController = owner.vc;
+        win.delegate = owner;
+        [win center];
+
+        owner.window = win;
+        [gStandaloneOwners addObject:owner];
+        [win makeKeyAndOrderFront:nil];
+    });
+}

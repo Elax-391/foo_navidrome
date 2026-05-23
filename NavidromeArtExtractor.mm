@@ -51,17 +51,39 @@ private:
 class navidrome_art_extractor : public album_art_extractor {
 public:
     bool is_our_path(const char* p_path, const char* /*p_ext*/) override {
+        if (!p_path) return false;
+        // New: navidrome:// URIs from the input handler.
+        if (strncmp(p_path, "navidrome://", 12) == 0) return true;
+        // Legacy: raw HTTP stream URLs (pre-URI-scheme playlists).
         return strstr(p_path, "/rest/stream.view") != nullptr;
     }
 
     album_art_extractor_instance_ptr open(file_ptr /*p_file*/,
                                           const char* p_path,
                                           abort_callback& /*p_abort*/) override {
-        // Prefer the coverArt param (album / Folder.jpg ID embedded at enqueue time).
-        // Fall back to the song id if coverArt is absent.
+        // Prefer the coverArt param (album / Folder.jpg ID embedded at enqueue
+        // time). For navidrome:// URIs the coverArt is the album/folder art id
+        // from Navidrome — same id used by getCoverArt.view, which on a tagged
+        // library serves the embedded Folder.jpg / cover.jpg.
+        //
+        // Falls back to the song id ("id" or the path component after track/)
+        // so Navidrome can still resolve via its per-track lookup.
         pfc::string8 artId = urlParamValue(p_path, "coverArt");
         if (artId.length() == 0)
             artId = urlParamValue(p_path, "id");
+        if (artId.length() == 0) {
+            // navidrome://track/<id>?... — extract <id> as last-resort
+            const char *prefix = "navidrome://track/";
+            const size_t prefixLen = 18;
+            if (strncmp(p_path, prefix, prefixLen) == 0) {
+                const char *idStart = p_path + prefixLen;
+                const char *idEnd = strchr(idStart, '?');
+                if (!idEnd) idEnd = idStart + strlen(idStart);
+                if (idEnd > idStart) {
+                    artId.set_string(idStart, (t_size)(idEnd - idStart));
+                }
+            }
+        }
         if (artId.length() == 0)
             throw exception_album_art_not_found();
         return new service_impl_t<navidrome_art_instance>(artId.c_str());

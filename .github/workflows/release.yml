@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# semantic-release needs to commit version.txt + CHANGELOG.md back to main
+# and create GitHub releases / tags.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+# Cancel in-flight releases if a new push lands (prevents two concurrent
+# semantic-release runs racing on the same tag).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+    # Skip the release commit semantic-release itself pushes (avoids loops).
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      # ----------------------------------------------------------------------
+      # Lay out the sibling-directory tree foo_navidrome expects:
+      #
+      #   {GITHUB_WORKSPACE}/
+      #     pfc/                              ← marc2k3/pfc
+      #     foobar2000/
+      #       SDK/, helpers/, shared/,        ← marc2k3/foobar2000-sdk
+      #       foobar2000_component_client/
+      #       helpers-mac/                    ← (if present in SDK repo)
+      #       foo_navidrome/                  ← this repo
+      # ----------------------------------------------------------------------
+      - name: Checkout foo_navidrome
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0           # semantic-release needs full history
+          persist-credentials: true
+          path: foobar2000/foo_navidrome
+
+      - name: Checkout foobar2000 SDK
+        uses: actions/checkout@v4
+        with:
+          repository: marc2k3/foobar2000-sdk
+          path: _sdk-staging
+
+      - name: Move SDK subdirs into ./foobar2000/
+        run: |
+          set -euo pipefail
+          for d in SDK helpers shared foobar2000_component_client helpers-mac; do
+            if [ -d "_sdk-staging/$d" ]; then
+              mv "_sdk-staging/$d" "foobar2000/$d"
+            fi
+          done
+          rm -rf _sdk-staging
+
+      - name: Checkout pfc
+        uses: actions/checkout@v4
+        with:
+          repository: marc2k3/pfc
+          path: pfc
+
+      # ----------------------------------------------------------------------
+      # Toolchain
+      # ----------------------------------------------------------------------
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install semantic-release + plugins
+        working-directory: foobar2000/foo_navidrome
+        run: |
+          npm install --no-save --no-package-lock \
+            semantic-release@22 \
+            conventional-changelog-conventionalcommits@7 \
+            @semantic-release/changelog@6 \
+            @semantic-release/git@10 \
+            @semantic-release/exec@6 \
+            @semantic-release/github@9
+
+      # ----------------------------------------------------------------------
+      # Release
+      # ----------------------------------------------------------------------
+      - name: Run semantic-release
+        working-directory: foobar2000/foo_navidrome
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release

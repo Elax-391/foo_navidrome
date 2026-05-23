@@ -36,3 +36,6 @@ version_generated.h
 *.dll
 *.fb2k-component
 build/
+
+# Claude
+.claude/

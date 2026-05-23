@@ -22,14 +22,20 @@ FB2K_COMPONENTS="${HOME}/Library/foobar2000-v2/user-components"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------------------------------------------------------------------------
-# 1. Locate the built .component bundle
+# 1. Locate the built .component bundle (prefer Release, then most-recently-built)
 # ---------------------------------------------------------------------------
-COMPONENT=$(find "$BUILD_DIR" -name "${COMPONENT_NAME}.component" \
-    -not -path "*/Index.noindex/*" 2>/dev/null \
-    | sort -t/ -k1 | head -1)
+find_component() {
+    local pattern="$1"
+    find "$BUILD_DIR" -path "*/Products/${pattern}/${COMPONENT_NAME}.component" \
+        -not -path "*/Index.noindex/*" 2>/dev/null \
+        | xargs -I{} stat -f "%m %N" {} 2>/dev/null \
+        | sort -rn | head -1 | awk '{print $2}'
+}
 
+COMPONENT=$(find_component "Release")
 if [ -z "$COMPONENT" ]; then
-    COMPONENT=$(find "$BUILD_DIR" -name "${COMPONENT_NAME}.component" 2>/dev/null | head -1)
+    echo "No Release build found, falling back to Debug."
+    COMPONENT=$(find_component "Debug")
 fi
 
 if [ -z "$COMPONENT" ]; then

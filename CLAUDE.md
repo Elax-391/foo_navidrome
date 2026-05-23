@@ -1,0 +1,119 @@
+# foo_navidrome
+
+## Overview
+
+foobar2000 v2 component that browses and streams from Navidrome / Subsonic-compatible servers. Cross-platform target: macOS (shipped) and Windows (in development). Two entry points on macOS: **File › Open Navidrome Browser** and **Preferences › Media Library › Library viewers › Navidrome**.
+
+## Architecture
+
+Shared C++ core + per-platform UI/HTTP layers:
+
+- `main.cpp`, `stdafx.h`, `SubsonicTypes.h` — cross-platform shared code (component version, pure-C++ data types)
+- `SubsonicClient.h/.mm` — macOS Subsonic HTTP client (ObjC/NSURLSession)
+- `Windows/SubsonicClientWin.h/.cpp` — Windows Subsonic client (WinHTTP)
+- `NavidromePlugin.mm` — macOS registration: `cfg_string` for URL/user/pass/salt, `preferences_page` under Tools, `mainmenu_commands` under File menu, `library_viewer` factory
+- `NavidromeInput.h/.mm` — `input_singletrack` handler for the `navidrome://track/<id>?...` URI scheme. Parses metadata from the URI for `get_info()`; on `decode_initialize()`, resolves the current HTTP stream URL via SubsonicClient and opens a nested `input_decoder` via `input_entry::g_open_for_decoding(..., fromRedirect=true)`. Registered with `input_entry::flag_redirect`.
+- `NavidromeArtExtractor.mm` — implements `album_art_fallback` so Now Playing / playlists show art fetched from Navidrome
+- `Mac/NavidromeBrowserController.*` — `NSViewController` housing the Artists/Albums/Songs tree, search, action buttons. Mounted in two places: (a) directly inside the *Preferences › Media Library › Navidrome* prefs sub-page; (b) wrapped in a standalone `NSWindow` by `NavidromeShowStandaloneBrowser()` (called by the File menu and `library_viewer.activate()`). Each mount point creates a fresh controller — Cocoa requires each `NSView` to have a single superview, so the previous shared-singleton pattern would have broken dual-mount. Enqueues tracks as `navidrome://` URIs (not raw HTTP URLs).
+- `Mac/NavidromePreferencesController.*` — `NSViewController` preferences UI
+- `Windows/NavidromePluginWin.cpp`, `Windows/BrowserWindow.*` — Windows ATL equivalents (not yet ported to the URI scheme architecture)
+
+GUIDs for cfg vars / prefs page / menu commands are hardcoded constants in `NavidromePlugin.mm` (lines 11–17) — must be regenerated when forking.
+
+Credentials persist via `cfg_string` (foobar2000 config store). Password is sent via Subsonic token auth (md5 of password + salt) by `SubsonicClient`.
+
+## Development
+
+### Build layout (siblings required, see README)
+
+```
+foobar2000/
+  SDK/, helpers/, shared/, foobar2000_component_client/
+  foo_navidrome/        ← this repo
+pfc/                    ← sibling of foobar2000/
+```
+
+### macOS
+
+1. Open `foo_navidrome.xcworkspace` in Xcode (must use the workspace, not the bare xcodeproj — pulls in SDK projects)
+2. Build the `foo_navidrome` scheme
+3. `./install.sh` copies the built component into foobar2000's user-components dir
+4. Restart foobar2000
+
+### Windows
+
+Visual Studio 2022. `Windows/foo_navidrome.vcxproj` — must update `<ProjectReference>` GUIDs to match the local SDK projects. Build Release|x64, copy `.dll` to `%APPDATA%\foobar2000\user-components\foo_navidrome\`.
+
+### Versioning + dev loop
+
+Single source of truth for the version is `version.txt` (tracked, e.g. `1.0.3`). The Xcode "Generate Version Header" build phase reads it on every build (declared `alwaysOutOfDate = 1` + listed in `inputPaths`) and writes `version_generated.h` (gitignored) used by `main.cpp` and `install.sh`.
+
+```bash
+./dev-build.sh                # bump patch, xcodebuild Release, install.sh
+./dev-build.sh --minor        # bump minor (resets patch to 0)
+./dev-build.sh --major        # bump major (resets minor + patch)
+./dev-build.sh --no-bump      # rebuild + install with current version (no bump)
+./dev-build.sh --no-install   # bump + build only (skip install.sh)
+./dev-build.sh --new-release  # bump, build, install, then gh release create
+```
+
+`install.sh` still works standalone (assumes a build already exists in DerivedData) — `dev-build.sh` is the wrapper that builds first.
+
+### Release pipeline
+
+Automated via `.github/workflows/release.yml` on every push to `main`. Uses [semantic-release](https://semantic-release.gitbook.io/) (config in `.releaserc.json`) reading [Conventional Commits](https://www.conventionalcommits.org/):
+
+- `feat:` → minor bump · `fix:`/`perf:`/`refactor:` → patch bump · `chore:`/`docs:`/`style:`/`test:`/`ci:` → no release · breaking change footer or `!` → major bump.
+- Plugin chain: `commit-analyzer` → `release-notes-generator` → `changelog` (writes `CHANGELOG.md`) → `exec` (calls `ci-build.sh <version>` which runs xcodebuild + packages `foo_navidrome_<version>.fb2k-component`) → `git` (commits `version.txt` + `CHANGELOG.md` with `[skip ci]`) → `github` (creates release with the `.fb2k-component` attached).
+- SDK source: the workflow clones `marc2k3/foobar2000-sdk` and `marc2k3/pfc` into the sibling-directory layout the project expects (`pfc/`, `foobar2000/{SDK,helpers,shared,foobar2000_component_client,helpers-mac,foo_navidrome}`).
+- First-time setup: tag the current state (`git tag v$(cat version.txt) && git push --tags`) so semantic-release has a starting reference; otherwise it treats the next release as `v1.0.0`.
+
+### Manual release (fallback, bypasses CI)
+
+```bash
+./dev-build.sh --new-release    # bump, build, install, package, gh release create
+```
+
+## Decisions & Constraints
+
+- **Media Library integration: native via custom URI + library_viewer.** foobar2000's *Preferences › Media Library › Music Folders* only accepts filesystem paths — there is no public SDK hook to register a remote source. The native-feeling integration uses two SDK extensions:
+  1. `input_singletrack` for the `navidrome://track/<id>?title=...&artist=...&album=...&tracknumber=N&date=YYYY&duration=SEC&coverArt=...&suffix=mp3` URI scheme. Metadata is embedded in the URI so playlists render without a network round-trip; the actual HTTP stream URL is resolved at decode time from current credentials, so playlists survive credential rotation / server URL changes. Implemented in `NavidromeInput.mm`.
+  2. `library_viewer` registration in `NavidromePlugin.mm` — the browser appears in *Preferences › Media Library › Library viewers* and can be activated from there.
+
+- **Embedded browser via the Media Library prefs sub-page.** Instead of going through `ui_element_mac` (which would surface the browser as a draggable DUI panel in the main layout), the browser is mounted directly as the content of the *Preferences › Media Library › Navidrome* sub-page — the prefs page's `instantiate()` returns the `NavidromeBrowserController` (an `NSViewController`). This gives users a native inline browser at zero refactor cost: the same view controller code is used by the standalone window. A real `ui_element_mac` layout panel is still a possible future iteration if users want to dock the browser inside the main layout, but the prefs-page mount covers the day-to-day "see my library without opening a separate window" use case.
+
+- **Input handler is registered as a redirect** (`input_entry::flag_redirect`) and opens nested decoders via `g_open_for_decoding(..., fromRedirect=true)` to prevent recursion. This keeps us from duplicating MP3/FLAC/OGG decode logic — foobar's built-in HTTP input does the heavy lifting.
+
+- Album art is implemented as a full `album_art_extractor` (NOT `album_art_fallback`) in `NavidromeArtExtractor.mm` — returning true from `is_our_path()` guarantees foobar calls `open()`, which is more reliable than fallback for streamed content. `is_our_path` matches both `navidrome://` URIs (current) and legacy `/rest/stream.view` HTTP URLs (for old playlists). The extractor's `open()` resolves the art id from, in priority order: `coverArt=` query param, `id=` query param, or the `<id>` segment of `navidrome://track/<id>`. The id is then passed to Subsonic's `getCoverArt.view` endpoint — which serves embedded ID3 art if present, otherwise the album folder's `Folder.jpg` / `cover.jpg`.
+
+- Linux is intentionally unsupported (foobar2000 has no Linux build).
+
+- The Subsonic salt is stored in `cfg_salt` with default `"fb2k_navidrome"` — kept configurable so token reuse can be invalidated if needed.
+
+- GUIDs for all services live as `static constexpr GUID` in the namespace that registers them. The input handler's GUID is in `NavidromeInput.mm`; the others are in `NavidromePlugin.mm` (lines 11-18). Must be regenerated when forking the component.
+
+## Gotchas
+
+- **`install.sh` must prefer Release over Debug builds.** DerivedData often contains a stale Debug `.component` from past Xcode builds. The script filters by `*/Products/Release/*` first, then sorts by mtime descending. If you change build configurations, audit `find_component()` in `install.sh`.
+
+- **`set -u` + empty bash arrays.** macOS ships bash 3.2 which treats `"${EMPTY_ARRAY[@]}"` as an unbound variable under `set -u`. `dev-build.sh` avoids this with explicit if/else around `./install.sh` invocation rather than building an array of args. Same trap applies to any new shell helpers — either use explicit conditionals or `"${ARR[@]+"${ARR[@]}"}"`.
+
+- **Bundle directory mtime doesn't update on `cp -Rf`.** When verifying an install, check the inner binary (`Contents/MacOS/foo_navidrome`), not the `.component` directory itself — `stat` on the directory shows the original mtime even after a fresh copy.
+
+- **`library_viewer` surfacing on foobar2000 v2 Mac.** There is NO unified "Library viewers" list page in Preferences. Instead, each `library_viewer` is expected to register its own `preferences_page` parented to `preferences_page::guid_media_library` — that page becomes the entry point that appears under *Preferences › Media Library*, alongside Album List / ReFacets. Our component does both: a config page parented to `guid_tools` (credentials) AND a `guid_media_library` sub-page (`preferences_page_navidrome_library` in `NavidromePlugin.mm`) with an "Open Navidrome Browser" button + status. Users diagnosing "I don't see Navidrome in my Media Library" should check (1) foobar fully restarted, (2) *Preferences › Components* shows the component loaded OK, (3) `View › Console` for registration errors.
+
+- **`library_viewer.get_preferences_page()` must point to the Media-Library-parented page**, not the Tools-parented one — that's how foobar wires the viewer into the Media Library navigation. In our code it returns `guid_library_prefs`, not `guid_prefs_page`.
+
+- **Debugging input/decode failures.** There's no straightforward debugger attach for foobar2000 components on Mac, so logging is the primary diagnostic channel. Pattern: wrap each step of `decode_initialize` (URL resolution, nested `g_open_for_decoding`, nested `initialize()`) in try/catch and log both success and exception messages — the user-visible error ("Unsupported format or corrupted file") is a generic foobar translation that doesn't pinpoint the failing step. Remove the logs once the issue is identified to avoid noise in production.
+
+- **Crash-resilient logging.** When foobar crashes mid-decode, `console::print` output gets lost (the console panel never flushes). Use a small file-logging helper (`navi_log` in `NavidromeInput.mm`) that writes to `/tmp/foo_navidrome.log` and closes the file after each line — that way the log survives even a hard crash. Mirror to `console::print` inside the helper for live viewing when nothing crashes.
+
+- **`navidrome://track/<id>` URI parsing — host vs path trap.** RFC-3986 says `scheme://X/Y` puts `X` in the authority (host) component and `/Y` in the path. So `NSURLComponents` on `navidrome://track/abc123` gives `host=track`, `path=/abc123`. Splitting `path` on `/` yields only 2 components (`["", "abc123"]`), not 3 — `parse_uri` in `NavidromeInput.mm` strips the leading `/` from `percentEncodedPath` and uses that as the song id. The literal string `track` in the URI is part of the prefix-match check in `g_is_our_path`, not a path segment we parse out. If extending the scheme with more "sub-paths" (e.g. `navidrome://playlist/<id>`), make the dispatcher inspect `c.host` rather than path segments.
+
+- **Any code that consumes `navidrome://` URIs must be updated when the scheme changes.** The art extractor's `is_our_path` originally only matched the legacy `/rest/stream.view` HTTP URLs and silently stopped working when we moved to `navidrome://` URIs — symptom was missing cover art in Now Playing with no error. Audit `strstr`/`strncmp` calls in `*.mm` whenever the URI scheme is touched.
+
+- **`NSViewController` for dual-mount UIs in foobar2000.** Foobar's macOS preferences pages take an NSObject wrapped via `fb2k::wrapNSObject(...)`; passing an `NSViewController` works directly. To also expose the same UI as a standalone window (menu / `library_viewer.activate()`), create the VC and set `window.contentViewController = vc`. Do NOT share a single VC instance across multiple mount points — Cocoa requires each `NSView` to have a single superview, so a shared VC's `view` can only be parented to one host at a time. Each mount creates its own VC; data sharing happens at the model layer (`SubsonicClient` singleton).
+
+- **Release-loop prevention.** semantic-release commits `version.txt` + `CHANGELOG.md` back to `main` after a successful release. Without guarding, that push would trigger the workflow again. Two layers of protection: (1) the release commit message contains `[skip ci]`, and (2) `release.yml` has `if: "!contains(github.event.head_commit.message, '[skip ci]')"` — both must remain in sync. The workflow also uses `concurrency: { group: release-${{ github.ref }} }` so two releases can't race on the same tag.
+
+- **`dev-build.sh` vs `ci-build.sh` — keep them separate.** `dev-build.sh` is the local developer loop: bumps `version.txt`, builds, **installs locally** to `~/Library/foobar2000-v2/`, packages. `ci-build.sh` is for the GitHub Actions runner: receives the version as an arg (from semantic-release), builds into a hermetic `build/derived/` path, packages — and crucially does NOT touch `~/Library` (which on a runner would create a phantom dir). Don't merge them.

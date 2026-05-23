@@ -44,13 +44,17 @@ typedef NS_ENUM(NSInteger, NavidromeNodeType) {
 @end
 
 // ---------------------------------------------------------------------------
-// Browser window controller
+// Browser view controller — embeddable. Used both inside the Media Library
+// preferences page (no extra window) and wrapped in a standalone NSWindow
+// when invoked from the File menu / library_viewer activate.
 // ---------------------------------------------------------------------------
 
-@interface NavidromeBrowserController : NSWindowController
+@interface NavidromeBrowserController : NSViewController
                                       <NSOutlineViewDataSource,
                                        NSOutlineViewDelegate>
-
-+ (instancetype)sharedBrowser;
-
 @end
+
+// Wraps a fresh NavidromeBrowserController inside an NSWindow and shows it.
+// Retains the window/controller pair internally so they survive until the
+// window is closed by the user. Safe to call from any thread.
+void NavidromeShowStandaloneBrowser(void);
