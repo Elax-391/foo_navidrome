@@ -36,33 +36,44 @@ jobs:
       #       foo_navidrome/                  ← this repo
       # ----------------------------------------------------------------------
       - name: Checkout foo_navidrome
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0           # semantic-release needs full history
           persist-credentials: true
           path: foobar2000/foo_navidrome
 
-      - name: Checkout foobar2000 SDK
-        uses: actions/checkout@v4
+      - name: Checkout foobar2000 SDK bundle
+        uses: actions/checkout@v6
         with:
           repository: marc2k3/foobar2000-sdk
           path: _sdk-staging
 
-      - name: Move SDK subdirs into ./foobar2000/
+      - name: Move SDK subdirs into the expected sibling layout
         run: |
           set -euo pipefail
+          # SDK + Mac helpers + component client live under ./foobar2000/
           for d in SDK helpers shared foobar2000_component_client helpers-mac; do
             if [ -d "_sdk-staging/$d" ]; then
               mv "_sdk-staging/$d" "foobar2000/$d"
+              echo "moved _sdk-staging/$d -> foobar2000/$d"
+            fi
+          done
+          # pfc lives at the workspace root (sibling of foobar2000/)
+          if [ -d "_sdk-staging/pfc" ]; then
+            mv "_sdk-staging/pfc" "pfc"
+            echo "moved _sdk-staging/pfc -> pfc"
+          fi
+          # Verify everything we need is present before continuing
+          for d in foobar2000/SDK foobar2000/helpers foobar2000/shared \
+                   foobar2000/foobar2000_component_client pfc; do
+            if [ ! -d "$d" ]; then
+              echo "ERROR: required dir '$d' not found after staging." >&2
+              echo "Contents of _sdk-staging (if it still exists):" >&2
+              ls -la _sdk-staging 2>/dev/null || true
+              exit 1
             fi
           done
           rm -rf _sdk-staging
-
-      - name: Checkout pfc
-        uses: actions/checkout@v4
-        with:
-          repository: marc2k3/pfc
-          path: pfc
 
       # ----------------------------------------------------------------------
       # Toolchain
@@ -71,9 +82,9 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Install semantic-release + plugins
         working-directory: foobar2000/foo_navidrome
