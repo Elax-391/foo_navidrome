@@ -118,6 +118,8 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 
 - **`dev-build.sh` vs `ci-build.sh` — keep them separate.** `dev-build.sh` is the local developer loop: bumps `version.txt`, builds, **installs locally** to `~/Library/foobar2000-v2/`, packages. `ci-build.sh` is for the GitHub Actions runner: receives the version as an arg (from semantic-release), builds into a hermetic `build/derived/` path, packages — and crucially does NOT touch `~/Library` (which on a runner would create a phantom dir). Don't merge them.
 
+- **`xcodebuild` log handling in CI.** Never truncate xcodebuild output with `| tail` — compile-command echoes scroll the actual `error:` lines off the top, so a failed PCH or single bad symbol shows up as just `** BUILD FAILED **` with no context. `ci-build.sh` redirects the full log to `/tmp/xcodebuild.log`, prints a filtered summary (`error:`/`warning:`/`note:`/`** BUILD`/`ld:`/`fatal:`/`FAILED`) on every run, and dumps the full log on failure. Don't switch to `xcpretty` or similar without preserving this fallback — the diagnostic value when CI fails on a Mac build you can't reproduce locally is the whole point.
+
 - **SDK + pfc layout in CI.** `pfc/` is NOT a separate GitHub repo — `marc2k3/pfc` is a 404. The `marc2k3/foobar2000-sdk` bundle ships everything in a single checkout, but with a nested layout that mirrors the official SDK zip:
   ```
   _sdk-staging/

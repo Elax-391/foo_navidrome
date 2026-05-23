@@ -33,13 +33,31 @@ echo "ci-build: version = $VERSION"
 # 2. Build (Release)
 # ---------------------------------------------------------------------------
 echo "ci-build: xcodebuild Release ..."
+# Print full xcodebuild output to /tmp and stream a filtered summary to stdout.
+# On failure, dump the full log so the actual compile error is visible in the
+# GitHub Actions step output (the noisy compile-command echoes mean the error
+# message would otherwise scroll off-screen, hidden behind thousands of lines).
+LOG=/tmp/xcodebuild.log
+set +e
 xcodebuild \
     -workspace foo_navidrome.xcworkspace \
     -scheme foo_navidrome \
     -configuration Release \
     -derivedDataPath build/derived \
-    build \
-    | tail -n 5
+    build > "$LOG" 2>&1
+XCB_RC=$?
+set -e
+
+# Always show the summary (errors, warnings, notes, BUILD result lines).
+grep -E "error:|warning:|note:|\\*\\* BUILD|ld:|fatal:|FAILED" "$LOG" || true
+
+if [ $XCB_RC -ne 0 ]; then
+    echo "ci-build: xcodebuild failed (rc=$XCB_RC). Full log:"
+    echo "----- BEGIN xcodebuild log -----"
+    cat "$LOG"
+    echo "----- END xcodebuild log -----"
+    exit $XCB_RC
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Locate built bundle
