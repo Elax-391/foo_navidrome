@@ -40,8 +40,9 @@ public:
     // preferences_page_instance
     HWND      get_wnd() override { return m_hWnd; }
     t_uint32  get_state() override {
+        // preferences_state has no "unchanged" constant — the unchanged state is 0.
         return m_changed ? preferences_state::changed | preferences_state::resettable
-                         : preferences_state::unchanged;
+                         : 0;
     }
     void apply()  override { saveSettings(); m_changed = false; notifyCb(); }
     void reset()  override {
@@ -53,6 +54,7 @@ public:
 
     BEGIN_MSG_MAP(NavidromePrefsInstance)
         MSG_WM_CREATE(OnCreate)
+        MESSAGE_HANDLER_EX(WM_TEST_RESULT, OnTestResult)
         COMMAND_HANDLER_EX(IDC_URL,  EN_CHANGE, OnChanged)
         COMMAND_HANDLER_EX(IDC_USER, EN_CHANGE, OnChanged)
         COMMAND_HANDLER_EX(IDC_PASS, EN_CHANGE, OnChanged)
@@ -61,6 +63,8 @@ public:
 
 private:
     enum { IDC_URL=1001, IDC_USER=1002, IDC_PASS=1003, IDC_TEST=1004, IDC_STATUS=1005 };
+    // Posted from the background ping thread back to the UI thread (see OnTest).
+    static constexpr UINT WM_TEST_RESULT = WM_USER + 200;
 
     LRESULT OnCreate(LPCREATESTRUCT) {
         HFONT f = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
@@ -116,29 +120,25 @@ private:
         std::thread([this]() {
             std::string err;
             bool ok = navidrome::SubsonicClientWin::get().ping(err);
-            PostMessage(WM_USER + 200, ok ? 1 : 0,
+            PostMessage(WM_TEST_RESULT, ok ? 1 : 0,
                 reinterpret_cast<LPARAM>(ok ? nullptr : new std::string(err)));
         }).detach();
     }
 
-    BEGIN_MSG_MAP_CHAIN(NavidromePrefsInstance)
-        if (uMsg == WM_USER + 200) {
-            bool ok = wParam != 0;
-            auto* errStr = reinterpret_cast<std::string*>(lParam);
-            SetDlgItemText(IDC_STATUS, ok ? L"Connected!" :
-                pfc::stringcvt::string_wide_from_utf8(errStr ? errStr->c_str() : "Failed"));
-            delete errStr;
-            bHandled = TRUE; return 0;
-        }
-    END_MSG_MAP_CHAIN()
+    // Runs on the UI thread; lParam owns a heap std::string with the error text
+    // (null on success). Registered via MESSAGE_HANDLER_EX in the message map.
+    LRESULT OnTestResult(UINT, WPARAM wParam, LPARAM lParam) {
+        bool ok = wParam != 0;
+        auto* errStr = reinterpret_cast<std::string*>(lParam);
+        SetDlgItemText(IDC_STATUS, ok ? L"Connected!" :
+            pfc::stringcvt::string_wide_from_utf8(errStr ? errStr->c_str() : "Failed"));
+        delete errStr;
+        return 0;
+    }
 
     preferences_page_callback::ptr m_cb;
     bool m_changed = false;
 };
-
-// Workaround: chain message map trick doesn't compile cleanly across MSVC versions.
-// Use a proper BEGIN/END_MSG_MAP and handle WM_USER+200 inside OnCreate registration.
-// (Production code should use a dedicated WM_USER constant and proper handler.)
 
 class NavidromePrefsPageFactory : public preferences_page_v3 {
 public:
@@ -150,7 +150,7 @@ public:
     }
     const char* get_name() override { return "Navidrome"; }
     GUID        get_guid() override { return guid_prefs_page; }
-    GUID        get_parent_guid() override { return guid_tools; }
+    GUID        get_parent_guid() override { return preferences_page::guid_tools; }
 };
 FB2K_SERVICE_FACTORY(NavidromePrefsPageFactory);
 
@@ -168,7 +168,7 @@ public:
         if (i == 0) { out = "Open Navidrome Browser"; return; }
         throw pfc::exception_invalid_params();
     }
-    bool get_description(t_uint32 i, pfc::string_base& out, t_uint32& flags) override {
+    bool get_description(t_uint32 i, pfc::string_base& out) override {
         if (i == 0) { out = "Browse and stream from Navidrome"; return true; }
         return false;
     }

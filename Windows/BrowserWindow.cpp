@@ -196,8 +196,15 @@ void BrowserWindow::populateChildren(LoadedPayload* payload) {
     for (auto& child : parent->children)
         insertNode(parent->hItem, child);
 
-    if (parent->children.empty())
-        m_tree.SetItemChildren(parent->hItem, FALSE);
+    if (parent->children.empty()) {
+        // No children — clear the expand button. WTL's CTreeViewCtrl has no
+        // SetItemChildren; set cChildren via the TVITEM mask directly.
+        TVITEM it   = {};
+        it.mask     = TVIF_CHILDREN;
+        it.hItem    = parent->hItem;
+        it.cChildren = 0;
+        m_tree.SetItem(&it);
+    }
 }
 
 HTREEITEM BrowserWindow::insertNode(HTREEITEM hParent,
@@ -292,7 +299,7 @@ LRESULT BrowserWindow::OnTreeDblClick(LPNMHDR) {
     if (!node) return 0;
     if (node->type == NavidromeNode::Song)
         enqueueNodes({ node }, true);
-    else if (m_tree.IsItemExpanded(hSel))
+    else if (m_tree.GetItemState(hSel, TVIS_EXPANDED) & TVIS_EXPANDED)
         m_tree.Expand(hSel, TVE_COLLAPSE);
     else
         m_tree.Expand(hSel, TVE_EXPAND);

@@ -157,7 +157,7 @@ static std::string checkResponse(const std::string& body, std::string& outError)
         return "";
     }
     // Return everything inside "subsonic-response":{...}
-    auto k = "\"subsonic-response\":{";
+    std::string k = "\"subsonic-response\":{";
     auto p = body.find(k);
     if (p == std::string::npos) { outError = "Invalid response"; return ""; }
     p += k.size() - 1;

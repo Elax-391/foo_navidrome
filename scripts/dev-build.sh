@@ -6,13 +6,14 @@
 #   ./dev-build.sh --minor          — bump minor (resets patch to 0)
 #   ./dev-build.sh --major          — bump major (resets minor + patch to 0)
 #   ./dev-build.sh --no-bump        — skip the version bump (just build + install)
-#   ./dev-build.sh --no-install     — build only (skip install.sh)
+#   ./dev-build.sh --no-install     — build only (skip install-macos.sh)
 #   ./dev-build.sh --new-release    — bump, build, install, then create a GitHub release
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VERSION_FILE="${SCRIPT_DIR}/version.txt"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"   # scripts/
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"          # repo root
+VERSION_FILE="${ROOT}/version.txt"
 
 BUMP="patch"
 DO_INSTALL=true
@@ -59,7 +60,7 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Build
 # ---------------------------------------------------------------------------
-cd "$SCRIPT_DIR"
+cd "$ROOT"
 echo "Building (Release)..."
 xcodebuild \
     -workspace foo_navidrome.xcworkspace \
@@ -72,13 +73,13 @@ xcodebuild \
 echo "Build OK."
 
 # ---------------------------------------------------------------------------
-# 3. Install (delegates to install.sh, which also packages the .fb2k-component)
+# 3. Install (delegates to install-macos.sh, which also packages the .fb2k-component)
 # ---------------------------------------------------------------------------
 if [ "$DO_INSTALL" = true ]; then
     if [ "$DO_RELEASE" = true ]; then
-        ./install.sh --new-release
+        "$SCRIPT_DIR/install-macos.sh" --new-release
     else
-        ./install.sh
+        "$SCRIPT_DIR/install-macos.sh"
     fi
 fi
 

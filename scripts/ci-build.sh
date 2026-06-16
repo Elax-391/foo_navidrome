@@ -18,16 +18,27 @@ if [ $# -lt 1 ]; then
 fi
 
 VERSION="$1"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"   # scripts/
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"          # repo root (xcodeproj, version.txt)
 COMPONENT_NAME="foo_navidrome"
 
-cd "$SCRIPT_DIR"
+cd "$ROOT"
 
 # ---------------------------------------------------------------------------
 # 1. Pin version
 # ---------------------------------------------------------------------------
 echo "$VERSION" > version.txt
 echo "ci-build: version = $VERSION"
+
+# Expose the resolved version to the GitHub Actions step that invoked
+# semantic-release. The downstream Windows build job (needs: release) reads
+# this output to gate on "a release happened" and to check out the matching
+# tag. $GITHUB_OUTPUT is inherited from the wrapping step's environment; it's
+# only set under CI, so this is a no-op for local dev-build runs.
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "released_version=$VERSION" >> "$GITHUB_OUTPUT"
+    echo "ci-build: exported released_version=$VERSION to GITHUB_OUTPUT"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Build (Release)
@@ -85,7 +96,7 @@ codesign --sign - --force --deep "$COMPONENT"
 # 5. Package into foo_navidrome_<VERSION>.fb2k-component
 #    foobar2000 v2.6+ expects Mac bundles under "mac/" inside the zip.
 # ---------------------------------------------------------------------------
-OUTPUT="${SCRIPT_DIR}/${COMPONENT_NAME}_${VERSION}.fb2k-component"
+OUTPUT="${ROOT}/${COMPONENT_NAME}_${VERSION}.fb2k-component"
 TMPDIR_PKG=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_PKG"' EXIT
 

@@ -23,6 +23,12 @@ jobs:
     # Skip the release commit semantic-release itself pushes (avoids loops).
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
 
+    # Expose the version semantic-release resolved (written to $GITHUB_OUTPUT by
+    # ci-build.sh's prepareCmd) so the Windows job can attach its x64 component
+    # to the same release. Empty when no release was published this run.
+    outputs:
+      released_version: ${{ steps.semantic_release.outputs.released_version }}
+
     steps:
       # ----------------------------------------------------------------------
       # Lay out the sibling-directory tree foo_navidrome expects:
@@ -110,6 +116,7 @@ jobs:
       # Release
       # ----------------------------------------------------------------------
       - name: Run semantic-release
+        id: semantic_release
         working-directory: foobar2000/foo_navidrome
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -123,3 +130,46 @@ jobs:
           path: /tmp/xcodebuild.log
           if-no-files-found: ignore
           retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # Windows x64 component, attached to the SAME GitHub release.
+  #
+  # The actual build lives in the reusable build-windows.yml workflow (also
+  # dispatchable on its own for local test builds via win-test.sh). Here we
+  # call it for the tag semantic-release just created, then attach its
+  # .fb2k-component artifact to the existing release.
+  #
+  # Both jobs are gated on released_version, so they no-op when no release was
+  # published. They are NON-GATING for the release itself: the macOS asset has
+  # already shipped by the time these run, so a Windows compile failure (the
+  # sources are still mid-port) just leaves the release without a Windows asset.
+  # --------------------------------------------------------------------------
+  build-windows:
+    needs: release
+    if: needs.release.outputs.released_version != ''
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      ref: v${{ needs.release.outputs.released_version }}
+      version: ${{ needs.release.outputs.released_version }}
+
+  attach-windows:
+    needs: [release, build-windows]
+    if: needs.release.outputs.released_version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows component artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-windows.outputs.artifact-name }}
+          path: dist
+
+      - name: Attach .fb2k-component to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.released_version }}
+          ASSET: ${{ needs.build-windows.outputs.asset-name }}
+        run: |
+          set -euo pipefail
+          gh release upload "v${VERSION}" "dist/${ASSET}" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+          echo "uploaded dist/${ASSET} to release v${VERSION}"

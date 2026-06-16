@@ -32,7 +32,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "./ci-build.sh ${nextRelease.version}"
+        "prepareCmd": "./scripts/ci-build.sh ${nextRelease.version}"
       }
     ],
     [

@@ -45,7 +45,7 @@ Releases before automation:
 
 ## 1.0.4 — 2026-05-23
 
-- `install.sh` prefers the Release build over a stale Debug build in
+- `install-macos.sh` prefers the Release build over a stale Debug build in
   DerivedData.
 
 ## 1.0.3 — 2026-05-23

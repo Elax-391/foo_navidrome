@@ -37,7 +37,7 @@ pfc/                    ← sibling of foobar2000/
 
 1. Open `foo_navidrome.xcworkspace` in Xcode (must use the workspace, not the bare xcodeproj — pulls in SDK projects)
 2. Build the `foo_navidrome` scheme
-3. `./install.sh` copies the built component into foobar2000's user-components dir
+3. `./scripts/install-macos.sh` copies the built component into foobar2000's user-components dir
 4. Restart foobar2000
 
 ### Windows
@@ -46,18 +46,18 @@ Visual Studio 2022. `Windows/foo_navidrome.vcxproj` — must update `<ProjectRef
 
 ### Versioning + dev loop
 
-Single source of truth for the version is `version.txt` (tracked, e.g. `1.0.3`). The Xcode "Generate Version Header" build phase reads it on every build (declared `alwaysOutOfDate = 1` + listed in `inputPaths`) and writes `version_generated.h` (gitignored) used by `main.cpp` and `install.sh`.
+Single source of truth for the version is `version.txt` (tracked, e.g. `1.0.3`). The Xcode "Generate Version Header" build phase reads it on every build (declared `alwaysOutOfDate = 1` + listed in `inputPaths`) and writes `version_generated.h` (gitignored) used by `main.cpp` and `install-macos.sh`.
 
 ```bash
-./dev-build.sh                # bump patch, xcodebuild Release, install.sh
-./dev-build.sh --minor        # bump minor (resets patch to 0)
-./dev-build.sh --major        # bump major (resets minor + patch)
-./dev-build.sh --no-bump      # rebuild + install with current version (no bump)
-./dev-build.sh --no-install   # bump + build only (skip install.sh)
-./dev-build.sh --new-release  # bump, build, install, then gh release create
+./scripts/dev-build.sh                # bump patch, xcodebuild Release, install-macos.sh
+./scripts/dev-build.sh --minor        # bump minor (resets patch to 0)
+./scripts/dev-build.sh --major        # bump major (resets minor + patch)
+./scripts/dev-build.sh --no-bump      # rebuild + install with current version (no bump)
+./scripts/dev-build.sh --no-install   # bump + build only (skip install-macos.sh)
+./scripts/dev-build.sh --new-release  # bump, build, install, then gh release create
 ```
 
-`install.sh` still works standalone (assumes a build already exists in DerivedData) — `dev-build.sh` is the wrapper that builds first.
+`install-macos.sh` still works standalone (assumes a build already exists in DerivedData) — `dev-build.sh` is the wrapper that builds first.
 
 ### Release pipeline
 
@@ -71,7 +71,7 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 ### Manual release (fallback, bypasses CI)
 
 ```bash
-./dev-build.sh --new-release    # bump, build, install, package, gh release create
+./scripts/dev-build.sh --new-release    # bump, build, install, package, gh release create
 ```
 
 ## Decisions & Constraints
@@ -94,9 +94,9 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 
 ## Gotchas
 
-- **`install.sh` must prefer Release over Debug builds.** DerivedData often contains a stale Debug `.component` from past Xcode builds. The script filters by `*/Products/Release/*` first, then sorts by mtime descending. If you change build configurations, audit `find_component()` in `install.sh`.
+- **`install-macos.sh` must prefer Release over Debug builds.** DerivedData often contains a stale Debug `.component` from past Xcode builds. The script filters by `*/Products/Release/*` first, then sorts by mtime descending. If you change build configurations, audit `find_component()` in `install-macos.sh`.
 
-- **`set -u` + empty bash arrays.** macOS ships bash 3.2 which treats `"${EMPTY_ARRAY[@]}"` as an unbound variable under `set -u`. `dev-build.sh` avoids this with explicit if/else around `./install.sh` invocation rather than building an array of args. Same trap applies to any new shell helpers — either use explicit conditionals or `"${ARR[@]+"${ARR[@]}"}"`.
+- **`set -u` + empty bash arrays.** macOS ships bash 3.2 which treats `"${EMPTY_ARRAY[@]}"` as an unbound variable under `set -u`. `dev-build.sh` avoids this with explicit if/else around `./install-macos.sh` invocation rather than building an array of args. Same trap applies to any new shell helpers — either use explicit conditionals or `"${ARR[@]+"${ARR[@]}"}"`.
 
 - **Bundle directory mtime doesn't update on `cp -Rf`.** When verifying an install, check the inner binary (`Contents/MacOS/foo_navidrome`), not the `.component` directory itself — `stat` on the directory shows the original mtime even after a fresh copy.
 

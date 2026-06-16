@@ -3,8 +3,8 @@
 # Run after building in Xcode (Product > Build or Cmd+B).
 #
 # Usage:
-#   ./install.sh                  — build, install locally, package
-#   ./install.sh --new-release    — same, then create a GitHub release and upload the package
+#   ./install-macos.sh                  — build, install locally, package
+#   ./install-macos.sh --new-release    — same, then create a GitHub release and upload the package
 
 set -euo pipefail
 
@@ -19,7 +19,8 @@ done
 COMPONENT_NAME="foo_navidrome"
 BUILD_DIR="${HOME}/Library/Developer/Xcode/DerivedData"
 FB2K_COMPONENTS="${HOME}/Library/foobar2000-v2/user-components"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"   # scripts/
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"          # repo root (version_generated.h, package output)
 
 # ---------------------------------------------------------------------------
 # 1. Locate the built .component bundle (prefer Release, then most-recently-built)
@@ -65,13 +66,13 @@ codesign --sign - --force --deep "$INSTALLED"
 # ---------------------------------------------------------------------------
 # Read version from the generated header (created by the Xcode build phase)
 VERSION=""
-VERSION_HEADER="${SCRIPT_DIR}/version_generated.h"
+VERSION_HEADER="${ROOT}/version_generated.h"
 if [ -f "$VERSION_HEADER" ]; then
     VERSION=$(grep 'COMPONENT_VERSION' "$VERSION_HEADER" | sed 's/.*"\(.*\)".*/\1/')
 fi
 VERSION_SUFFIX="${VERSION:+_${VERSION}}"
 
-OUTPUT="${SCRIPT_DIR}/${COMPONENT_NAME}${VERSION_SUFFIX}.fb2k-component"
+OUTPUT="${ROOT}/${COMPONENT_NAME}${VERSION_SUFFIX}.fb2k-component"
 echo "Packaging:  $OUTPUT"
 
 TMPDIR_PKG=$(mktemp -d)

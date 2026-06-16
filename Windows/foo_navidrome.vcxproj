@@ -84,7 +84,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <AdditionalDependencies>
-        winhttp.lib;crypt32.lib;comctl32.lib;%(AdditionalDependencies)
+        winhttp.lib;crypt32.lib;comctl32.lib;winmm.lib;%(AdditionalDependencies)
       </AdditionalDependencies>
       <AdditionalLibraryDirectories>
         $(OutDir);%(AdditionalLibraryDirectories)
