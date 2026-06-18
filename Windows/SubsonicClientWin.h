@@ -22,6 +22,14 @@ public:
     std::string streamURL(const std::string& songId);
     std::string coverArtURL(const std::string& id, int size = 0);
 
+    // User-configured extra HTTP headers ("Name: Value" lines) applied to every
+    // request — API, cover art and audio stream. Shared so the WinHTTP clients
+    // and the navidrome:// input handler all send the same set.
+    static std::vector<std::string> customHeaderLines();
+    // Same headers joined as a single CRLF-delimited wide string for
+    // WinHttpAddRequestHeaders (empty if none configured).
+    static std::wstring customHeadersWide();
+
 private:
     SubsonicClientWin() = default;
 

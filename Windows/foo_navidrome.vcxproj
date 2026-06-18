@@ -125,6 +125,7 @@
     <ClCompile Include="..\main.cpp" />
     <ClCompile Include="SubsonicClientWin.cpp" />
     <ClCompile Include="NavidromePluginWin.cpp" />
+    <ClCompile Include="NavidromeInputWin.cpp" />
     <ClCompile Include="BrowserWindow.cpp" />
   </ItemGroup>
 
@@ -132,6 +133,7 @@
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="..\SubsonicTypes.h" />
     <ClInclude Include="SubsonicClientWin.h" />
+    <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />
   </ItemGroup>
 

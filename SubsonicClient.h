@@ -68,4 +68,8 @@
 // Returns cover art URL (size 0 = original)
 - (NSURL *)coverArtURLForId:(NSString *)coverArtId size:(NSInteger)size;
 
+// Synchronous GET of arbitrary URL data with the configured custom HTTP headers
+// applied (used by the album-art extractor). Returns nil + sets *error on failure.
+- (NSData *)dataForURL:(NSURL *)url error:(NSError **)error;
+
 @end

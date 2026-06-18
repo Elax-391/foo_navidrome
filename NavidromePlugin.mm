@@ -18,6 +18,7 @@ static constexpr GUID guid_mainmenu_group  = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xa
 static constexpr GUID guid_mainmenu_cmd    = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x07 } };
 static constexpr GUID guid_library_viewer  = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x08 } };
 static constexpr GUID guid_library_prefs   = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x09 } };
+static constexpr GUID guid_cfg_custom_headers = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0a } };
 
 // ---------------------------------------------------------------------------
 // Config variables (exported so SubsonicClient.mm can access them)
@@ -27,6 +28,10 @@ namespace navidrome {
     cfg_string cfg_username  (guid_cfg_username,   "");
     cfg_string cfg_password  (guid_cfg_password,   "");
     cfg_string cfg_salt      (guid_cfg_salt,        "fb2k_navidrome");
+    // Extra HTTP headers (one "Name: Value" per line) sent on every request —
+    // API, cover art and audio stream. Used e.g. for Cloudflare Access
+    // service-token headers when Navidrome sits behind a Zero Trust tunnel.
+    cfg_string cfg_custom_headers(guid_cfg_custom_headers, "");
 }
 
 // ---------------------------------------------------------------------------

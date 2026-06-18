@@ -1,9 +1,11 @@
 #include "stdafx.h"
 #include "BrowserWindow.h"
 #include "SubsonicClientWin.h"
+#include "NavidromeInputWin.h"
 #include <SDK/playlist.h>
 #include <SDK/metadb.h>
 #include <SDK/playable_location.h>
+#include <SDK/playback_control.h>
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
 
@@ -450,11 +452,17 @@ void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> son
     auto hints = metadb_io_v2::get()->create_hint_list();
 
     for (auto& node : songs) {
-        std::string url = navidrome::SubsonicClientWin::get().streamURL(node->id);
+        // Enqueue a navidrome://track/<id>?... URI (not the raw HTTP URL) so the
+        // input handler resolves the stream — with custom headers — at decode
+        // time, and metadata renders without a network round-trip.
+        std::string uri = navidrome::makeTrackURI(node->id, node->displayName,
+            node->subtitle, node->album, node->track, node->year,
+            node->duration, node->coverArtId, node->suffix);
+        if (uri.empty()) continue;
 
         metadb_handle_ptr handle;
         playable_location_impl loc;
-        loc.set_path(url.c_str());
+        loc.set_path(uri.c_str());
         loc.set_subsong(0);
         metadb::get()->handle_create(handle, loc);
         tracks += handle;

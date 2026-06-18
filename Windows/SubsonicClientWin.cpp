@@ -11,11 +11,31 @@ namespace navidrome {
     extern cfg_string cfg_username;
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;
+    extern cfg_string cfg_custom_headers;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// Force modern TLS on a WinHTTP session. WinHTTP's legacy default negotiates
+// SSL3 / TLS1.0, which Cloudflare and most modern endpoints reject (handshake
+// fails with ERROR_WINHTTP_SECURE_CHANNEL_ERROR, 12157). We offer only TLS
+// 1.2 + 1.3 — secure and correct for real Windows schannel.
+//
+// NOTE (Wine only): a server configured with Minimum TLS Version = 1.3 still
+// fails under Wine, because Wine's gnutls-backed schannel mis-negotiates when
+// 1.2 and 1.3 are both offered (server replies fatal alert 70, protocol
+// version). Real Windows schannel handles this fine; the workaround for Wine
+// testing is to set the Cloudflare zone's Minimum TLS Version to 1.2.
+static void applySecureProtocols(HINTERNET hSession) {
+    DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+#ifdef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
+    protocols |= WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+#endif
+    WinHttpSetOption(hSession, WINHTTP_OPTION_SECURE_PROTOCOLS,
+                     &protocols, sizeof(protocols));
+}
 
 static std::wstring toWide(const std::string& s) {
     if (s.empty()) return {};
@@ -203,6 +223,19 @@ std::string navidrome::SubsonicClientWin::buildURL(const std::string& endpoint,
     return url;
 }
 
+std::vector<std::string> navidrome::SubsonicClientWin::customHeaderLines() {
+    return navidrome::parseHeaderLines(cfg_custom_headers.get().c_str());
+}
+
+std::wstring navidrome::SubsonicClientWin::customHeadersWide() {
+    std::string joined;
+    for (const auto& line : customHeaderLines()) {
+        if (!joined.empty()) joined += "\r\n";
+        joined += line;
+    }
+    return joined.empty() ? std::wstring() : toWide(joined);
+}
+
 std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
                                                    std::string& outError) const {
     std::wstring wurl = toWide(urlStr);
@@ -222,6 +255,7 @@ std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSess) { outError = "WinHttpOpen failed"; return ""; }
     WinHttpSetTimeouts(hSess, 0, 15000, 15000, 30000);
+    applySecureProtocols(hSess);
 
     HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
     if (!hConn) { WinHttpCloseHandle(hSess); outError = "Connect failed"; return ""; }
@@ -232,6 +266,10 @@ std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
 
     std::string result;
     if (hReq) {
+        std::wstring hdrs = customHeadersWide();
+        if (!hdrs.empty())
+            WinHttpAddRequestHeaders(hReq, hdrs.c_str(), (DWORD)-1,
+                WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
         if (WinHttpSendRequest(hReq, nullptr, 0, nullptr, 0, 0, 0) &&
             WinHttpReceiveResponse(hReq, nullptr)) {
             DWORD status = 0, sz = sizeof(status);

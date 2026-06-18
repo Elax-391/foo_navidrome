@@ -1,4 +1,5 @@
 #import "SubsonicClient.h"
+#import "SubsonicTypes.h"
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #import <CommonCrypto/CommonDigest.h>
@@ -10,6 +11,26 @@ namespace navidrome {
     extern cfg_string cfg_username;
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;  // Fixed salt generated once at component load
+    extern cfg_string cfg_custom_headers;
+}
+
+// Apply the user-configured custom headers (one "Name: Value" per line) to a
+// mutable request — shared by API calls and cover-art fetches so every request
+// carries e.g. Cloudflare Access service tokens.
+static void NavidromeApplyCustomHeaders(NSMutableURLRequest *req) {
+    for (const std::string &line :
+         navidrome::parseHeaderLines(navidrome::cfg_custom_headers.get().c_str())) {
+        size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string name = line.substr(0, colon);
+        size_t ne = name.find_last_not_of(" \t");
+        name = (ne == std::string::npos) ? "" : name.substr(0, ne + 1);
+        size_t vs = line.find_first_not_of(" \t", colon + 1);
+        std::string value = (vs == std::string::npos) ? "" : line.substr(vs);
+        if (name.empty()) continue;
+        [req setValue:[NSString stringWithUTF8String:value.c_str()]
+            forHTTPHeaderField:[NSString stringWithUTF8String:name.c_str()]];
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +148,11 @@ static NSString *urlEncode(NSString *s) {
     __block NSError *taskError = nil;
     __block NSHTTPURLResponse *httpResponse = nil;
 
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    NavidromeApplyCustomHeaders(request);
+
     dispatch_semaphore_t sema = dispatch_semaphore_create(0);
-    [[_session dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+    [[_session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         responseData = data;
         taskError = error;
         httpResponse = (NSHTTPURLResponse *)response;
@@ -379,6 +403,32 @@ static NSString *urlEncode(NSString *s) {
     NSString *full = [NSString stringWithFormat:@"%@/rest/getCoverArt.view?id=%@&%@%@",
                       base, urlEncode(coverArtId), auth, sizeParam];
     return [NSURL URLWithString:full];
+}
+
+- (NSData *)dataForURL:(NSURL *)url error:(NSError **)outError {
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    NavidromeApplyCustomHeaders(request);
+
+    __block NSData *responseData = nil;
+    __block NSError *taskError = nil;
+    __block NSHTTPURLResponse *httpResponse = nil;
+    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+    [[_session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        responseData = data;
+        taskError = error;
+        httpResponse = (NSHTTPURLResponse *)response;
+        dispatch_semaphore_signal(sema);
+    }] resume];
+    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+
+    if (taskError) { if (outError) *outError = taskError; return nil; }
+    if (httpResponse && httpResponse.statusCode != 200) {
+        if (outError) *outError = [NSError errorWithDomain:@"SubsonicClient"
+            code:httpResponse.statusCode userInfo:@{NSLocalizedDescriptionKey:
+                [NSString stringWithFormat:@"HTTP %ld", (long)httpResponse.statusCode]}];
+        return nil;
+    }
+    return responseData;
 }
 
 @end

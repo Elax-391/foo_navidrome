@@ -32,7 +32,10 @@ public:
         if (!url) throw exception_album_art_not_found();
 
         NSError *err = nil;
-        NSData *data = [NSData dataWithContentsOfURL:url options:0 error:&err];
+        // Fetch through SubsonicClient so the configured custom headers (e.g.
+        // Cloudflare Access tokens) are applied — a bare dataWithContentsOfURL:
+        // would send none and get blocked behind a Zero Trust tunnel.
+        NSData *data = [SubsonicClient.sharedClient dataForURL:url error:&err];
         if (!data || data.length == 0)
             throw exception_album_art_not_found();
 

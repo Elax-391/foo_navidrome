@@ -44,4 +44,31 @@ struct SearchResults {
     std::vector<Song>   songs;
 };
 
+// Parse a multiline custom-headers blob (one "Name: Value" per line) into
+// trimmed, non-empty header lines suitable for HTTP request headers. Blank
+// lines and lines starting with '#' (treated as comments) are skipped.
+// Shared by every platform so API calls and audio streaming send the same set
+// (e.g. Cloudflare Access service-token headers for a Zero Trust tunnel).
+inline std::vector<std::string> parseHeaderLines(const std::string& blob) {
+    std::vector<std::string> out;
+    std::string line;
+    auto flush = [&]() {
+        const char* ws = " \t\r\n";
+        size_t b = line.find_first_not_of(ws);
+        size_t e = line.find_last_not_of(ws);
+        if (b != std::string::npos) {
+            std::string trimmed = line.substr(b, e - b + 1);
+            if (!trimmed.empty() && trimmed[0] != '#')
+                out.push_back(trimmed);
+        }
+        line.clear();
+    };
+    for (char ch : blob) {
+        if (ch == '\n') flush();
+        else            line.push_back(ch);
+    }
+    flush();
+    return out;
+}
+
 } // namespace navidrome

@@ -136,6 +136,7 @@ mapfile -t SRCS < <(
     echo "$REPO/main.cpp"
     echo "$REPO/Windows/SubsonicClientWin.cpp"
     echo "$REPO/Windows/NavidromePluginWin.cpp"
+    echo "$REPO/Windows/NavidromeInputWin.cpp"
     echo "$REPO/Windows/BrowserWindow.cpp"
   } |
   # Excluded from the SDK's "FB2K" build configs: pfc-fb2k-hooks.cpp provides the

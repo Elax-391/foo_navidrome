@@ -1,10 +1,17 @@
 #import "stdafx.h"
 #import "NavidromeInput.h"
 #import "SubsonicClient.h"
+#import "SubsonicTypes.h"
 #import <Foundation/Foundation.h>
 #include <SDK/input_impl.h>
 #include <SDK/file.h>
 #include <SDK/filesystem.h>
+#include <SDK/http_client.h>
+#include <SDK/cfg_var.h>
+
+namespace navidrome {
+    extern cfg_string cfg_custom_headers;
+}
 
 NSString *const NavidromeURIScheme = @"navidrome";
 NSString *const NavidromeURIPrefix = @"navidrome://track/";
@@ -75,9 +82,33 @@ public:
         }
         m_resolved_url = httpURL;
 
-        // Open the underlying HTTP stream as a regular input. The `true` flag
-        // marks this as a redirect open so foobar will not feed it back to us.
-        input_entry::g_open_for_decoding(m_decoder, file::ptr(), m_resolved_url.c_str(), p_abort, true);
+        // When custom headers are configured (e.g. Cloudflare Access service
+        // tokens), open the stream ourselves via http_client so the headers
+        // ride along, and hand the resulting file to the nested decoder.
+        // Otherwise pass a null file and let foobar open the URL directly
+        // (preserving Content-Type-based decoder selection).
+        file::ptr httpFile;
+        std::vector<std::string> headers =
+            navidrome::parseHeaderLines(navidrome::cfg_custom_headers.get().c_str());
+        if (!headers.empty()) {
+            http_request::ptr req = http_client::get()->create_request("GET");
+            for (const std::string &h : headers) req->add_header(h.c_str());
+            httpFile = req->run(m_resolved_url.c_str(), p_abort);
+        }
+
+        // Our own file has no audio extension in the URL, so give the decoder a
+        // suffix-based hint (track.<suffix>) for codec selection; it still reads
+        // bytes from httpFile.
+        const char *hint = m_resolved_url.c_str();
+        pfc::string8 hintBuf;
+        if (httpFile.is_valid() && !m_suffix.is_empty()) {
+            hintBuf << "track." << m_suffix;
+            hint = hintBuf.c_str();
+        }
+
+        // The `true` flag marks this as a redirect open so foobar will not feed
+        // it back to us.
+        input_entry::g_open_for_decoding(m_decoder, httpFile, hint, p_abort, true);
         if (m_decoder.is_empty()) throw exception_io_data();
         m_decoder->initialize(0, p_flags, p_abort);
     }
