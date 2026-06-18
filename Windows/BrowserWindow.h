@@ -55,6 +55,7 @@ public:
         MESSAGE_HANDLER(WM_NAVIDROME_CHILDREN, OnNavidromeChildren)
         NOTIFY_CODE_HANDLER_EX(TVN_ITEMEXPANDING, OnTreeExpanding)
         NOTIFY_CODE_HANDLER_EX(NM_DBLCLK,        OnTreeDblClick)
+        NOTIFY_CODE_HANDLER_EX(NM_RETURN,        OnTreeReturn)
         COMMAND_ID_HANDLER_EX(IDC_ADD,     OnAdd)
         COMMAND_ID_HANDLER_EX(IDC_PLAY,    OnPlay)
         COMMAND_ID_HANDLER_EX(IDC_REFRESH, OnRefresh)
@@ -78,6 +79,7 @@ private:
     LRESULT OnNavidromeChildren(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnTreeExpanding(LPNMHDR);
     LRESULT OnTreeDblClick(LPNMHDR);
+    LRESULT OnTreeReturn(LPNMHDR);
     void    OnAdd(UINT, int, HWND);
     void    OnPlay(UINT, int, HWND);
     void    OnRefresh(UINT, int, HWND);
@@ -91,6 +93,8 @@ private:
     void    collectSongsDeep(std::shared_ptr<NavidromeNode> node,
                              std::vector<std::shared_ptr<NavidromeNode>>& out);
     void    enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> songs, bool play);
+    std::vector<std::shared_ptr<NavidromeNode>> selectedNodes();
+    void    queueSelected(bool play, bool closeAfter);
     void    setStatus(const std::string& msg);
 
     CTreeViewCtrl m_tree;

@@ -312,7 +312,9 @@ LRESULT BrowserWindow::OnTreeDblClick(LPNMHDR) {
 // ---------------------------------------------------------------------------
 // Button actions
 // ---------------------------------------------------------------------------
-void BrowserWindow::OnAdd(UINT, int, HWND) {
+// Gather the tree's selected, playable nodes (standard treeview is single-
+// select, but iterating TVIS_SELECTED keeps this correct if that ever changes).
+std::vector<std::shared_ptr<NavidromeNode>> BrowserWindow::selectedNodes() {
     std::vector<std::shared_ptr<NavidromeNode>> selected;
     HTREEITEM hItem = m_tree.GetFirstVisibleItem();
     while (hItem) {
@@ -323,41 +325,37 @@ void BrowserWindow::OnAdd(UINT, int, HWND) {
         }
         hItem = m_tree.GetNextVisibleItem(hItem);
     }
+    return selected;
+}
+
+// Resolve the selected nodes to songs on a background thread, then enqueue on
+// the main thread. closeAfter hides the window once the tracks are queued \u2014
+// used by the Enter shortcut so "select artist + Enter" queues and dismisses.
+void BrowserWindow::queueSelected(bool play, bool closeAfter) {
+    auto selected = selectedNodes();
     if (selected.empty()) { setStatus("Select at least one item"); return; }
 
     setStatus("Loading tracks\u2026");
-    std::thread([this, selected]() {
+    std::thread([this, selected, play, closeAfter]() {
         std::vector<std::shared_ptr<NavidromeNode>> songs;
         for (auto& n : selected)
             collectSongsDeep(n, songs);
-        fb2k::inMainThread([this, songs]() mutable {
-            enqueueNodes(std::move(songs), false);
+        fb2k::inMainThread([this, songs, play, closeAfter]() mutable {
+            enqueueNodes(std::move(songs), play);
+            if (closeAfter && IsWindow()) ShowWindow(SW_HIDE);
         });
     }).detach();
 }
 
-void BrowserWindow::OnPlay(UINT, int, HWND) {
-    std::vector<std::shared_ptr<NavidromeNode>> selected;
-    HTREEITEM hItem = m_tree.GetFirstVisibleItem();
-    while (hItem) {
-        if (m_tree.GetItemState(hItem, TVIS_SELECTED) & TVIS_SELECTED) {
-            auto n = nodeForItem(hItem);
-            if (n && n->type != NavidromeNode::Loading && n->type != NavidromeNode::Error)
-                selected.push_back(n);
-        }
-        hItem = m_tree.GetNextVisibleItem(hItem);
-    }
-    if (selected.empty()) { setStatus("Select at least one item"); return; }
+void BrowserWindow::OnAdd(UINT, int, HWND)  { queueSelected(false, false); }
+void BrowserWindow::OnPlay(UINT, int, HWND) { queueSelected(true,  false); }
 
-    setStatus("Loading tracks\u2026");
-    std::thread([this, selected]() {
-        std::vector<std::shared_ptr<NavidromeNode>> songs;
-        for (auto& n : selected)
-            collectSongsDeep(n, songs);
-        fb2k::inMainThread([this, songs]() mutable {
-            enqueueNodes(std::move(songs), true);
-        });
-    }).detach();
+// Enter in the tree = add the selected item(s) to the playlist, start playing
+// the first track, and close the window. A quick "queue this artist, play it,
+// and get out of my way" shortcut.
+LRESULT BrowserWindow::OnTreeReturn(LPNMHDR) {
+    queueSelected(true, true);
+    return 0;
 }
 
 void BrowserWindow::OnRefresh(UINT, int, HWND) {

@@ -83,9 +83,31 @@ static NSString *formatDuration(NSTimeInterval secs) {
 // NavidromeBrowserController
 // ---------------------------------------------------------------------------
 
+// Outline view subclass that turns Return / Enter into a "commit" action.
+// Key equivalents (default buttons) intercept Return before -keyDown:, so the
+// Add button no longer claims @"\r" — this is the only Return handler now.
+@interface NavidromeCommitOutlineView : NSOutlineView
+@property (nonatomic, copy) void (^onCommit)(void);
+@end
+
+@implementation NavidromeCommitOutlineView
+- (void)keyDown:(NSEvent *)event {
+    NSString *chars = event.charactersIgnoringModifiers;
+    unichar c = chars.length ? [chars characterAtIndex:0] : 0;
+    if ((c == NSCarriageReturnCharacter || c == NSEnterCharacter) && self.onCommit) {
+        self.onCommit();
+        return;
+    }
+    [super keyDown:event];
+}
+@end
+
 @interface NavidromeBrowserController ()
 // Root artist nodes
 @property (nonatomic, strong) NSMutableArray<NavidromeNode *> *rootNodes;
+// YES when hosted in the standalone NSWindow (vs. embedded in the prefs page);
+// only then does the Enter shortcut close the window after queueing.
+@property (nonatomic, assign) BOOL standalone;
 // Controls
 @property (nonatomic, strong) NSOutlineView  *outlineView;
 @property (nonatomic, strong) NSSearchField  *searchField;
@@ -135,7 +157,10 @@ static NSString *formatDuration(NSTimeInterval secs) {
     [content addSubview:_spinner];
 
     // ── Outline view (center) ────────────────────────────────────────────
-    _outlineView = [[NSOutlineView alloc] init];
+    NavidromeCommitOutlineView *outline = [[NavidromeCommitOutlineView alloc] init];
+    __weak typeof(self) weakSelf = self;
+    outline.onCommit = ^{ [weakSelf commitSelectionFromKeyboard]; };
+    _outlineView = outline;
     _outlineView.dataSource = self;
     _outlineView.delegate   = self;
     _outlineView.usesAlternatingRowBackgroundColors = YES;
@@ -185,7 +210,8 @@ static NSString *formatDuration(NSTimeInterval secs) {
                                           target:self
                                           action:@selector(addToPlaylist:)];
     addBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    addBtn.keyEquivalent = @"\r";  // Return key
+    // Return is handled by the outline view (commit + play + close); don't let
+    // the default-button key equivalent steal it.
 
     NSButton *playBtn = [NSButton buttonWithTitle:@"Play Now"
                                            target:self
@@ -377,6 +403,14 @@ static NSString *formatDuration(NSTimeInterval secs) {
 
 // Entry point for Add/Play actions — handles async deep loading for artists/albums.
 - (void)addNodesToPlaylist:(NSArray<NavidromeNode *> *)nodes play:(BOOL)play {
+    [self addNodesToPlaylist:nodes play:play closeWhenDone:NO];
+}
+
+// closeWhenDone closes the standalone window once tracks are queued — used by
+// the Enter shortcut ("queue, play, and dismiss"). No-op when embedded.
+- (void)addNodesToPlaylist:(NSArray<NavidromeNode *> *)nodes
+                      play:(BOOL)play
+             closeWhenDone:(BOOL)closeWhenDone {
     if (nodes.count == 0) {
         _statusLabel.stringValue = @"Select at least one item first";
         return;
@@ -386,7 +420,11 @@ static NSString *formatDuration(NSTimeInterval secs) {
     BOOL allSongs = YES;
     for (NavidromeNode *n in nodes)
         if (n.type != NavidromeNodeTypeSong) { allSongs = NO; break; }
-    if (allSongs) { [self enqueueNodes:nodes play:play]; return; }
+    if (allSongs) {
+        [self enqueueNodes:nodes play:play];
+        if (closeWhenDone) [self closeStandaloneWindow];
+        return;
+    }
 
     [_spinner startAnimation:nil];
     _statusLabel.stringValue = @"Loading tracks…";
@@ -407,9 +445,20 @@ static NSString *formatDuration(NSTimeInterval secs) {
                                             err.localizedDescription];
             } else {
                 [self enqueueNodes:songs play:play];
+                if (closeWhenDone) [self closeStandaloneWindow];
             }
         });
     });
+}
+
+// Return / Enter in the tree: queue the selection, start playing the first
+// track, and close the window (standalone only).
+- (void)commitSelectionFromKeyboard {
+    [self addNodesToPlaylist:[self selectedNodes] play:YES closeWhenDone:YES];
+}
+
+- (void)closeStandaloneWindow {
+    if (self.standalone) [self.view.window close];
 }
 
 // Synchronous deep song collector — must be called from a background thread.
@@ -673,6 +722,7 @@ void NavidromeShowStandaloneBrowser(void) {
 
         NavidromeBrowserWindowOwner *owner = [NavidromeBrowserWindowOwner new];
         owner.vc = [NavidromeBrowserController new];
+        owner.vc.standalone = YES;   // enables the Enter = queue+play+close shortcut
 
         NSWindow *win = [[NSWindow alloc]
                          initWithContentRect:NSMakeRect(0, 0, 520, 600)
