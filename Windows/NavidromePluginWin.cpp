@@ -155,6 +155,72 @@ public:
 FB2K_SERVICE_FACTORY(NavidromePrefsPageFactory);
 
 // ---------------------------------------------------------------------------
+// Media Library preferences sub-page — makes "Navidrome" appear under
+// Preferences > Media Library (parity with the macOS build, which parents a
+// page to guid_media_library). The macOS page embeds the browser directly;
+// on Windows the browser is a standalone top-level window, so this page just
+// hosts an "Open Navidrome Browser" button that surfaces it.
+// ---------------------------------------------------------------------------
+class NavidromeLibraryPrefsInstance : public CWindowImpl<NavidromeLibraryPrefsInstance>,
+                                      public preferences_page_instance {
+public:
+    DECLARE_WND_CLASS(L"foo_navidrome_LibPrefsWnd")
+
+    explicit NavidromeLibraryPrefsInstance(preferences_page_callback::ptr cb) : m_cb(cb) {}
+
+    // Nothing editable on this page — it's a launcher, so it's never "changed".
+    HWND      get_wnd() override { return m_hWnd; }
+    t_uint32  get_state() override { return 0; }
+    void      apply() override {}
+    void      reset() override {}
+
+    BEGIN_MSG_MAP(NavidromeLibraryPrefsInstance)
+        MSG_WM_CREATE(OnCreate)
+        COMMAND_HANDLER_EX(IDC_OPEN, BN_CLICKED, OnOpen)
+    END_MSG_MAP()
+
+private:
+    enum { IDC_OPEN = 2001 };
+
+    LRESULT OnCreate(LPCREATESTRUCT) {
+        HFONT f = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HWND lbl = CreateWindowW(L"STATIC",
+            L"Browse and stream your Navidrome library.",
+            WS_CHILD|WS_VISIBLE, 10, 12, 380, 18, *this, nullptr, nullptr, nullptr);
+        SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
+
+        HWND btn = CreateWindowW(L"BUTTON", L"Open Navidrome Browser",
+            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON, 10, 40, 180, 26, *this,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_OPEN)), nullptr, nullptr);
+        SendMessageW(btn, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
+        return 0;
+    }
+
+    void OnOpen(UINT, int, HWND) {
+        fb2k::inMainThread([] { BrowserWindow::get().show(); });
+    }
+
+    preferences_page_callback::ptr m_cb;
+};
+
+class NavidromeLibraryPrefsFactory : public preferences_page_v3 {
+public:
+    preferences_page_instance::ptr instantiate(HWND parent,
+        preferences_page_callback::ptr cb) override {
+        auto inst = fb2k::service_new<NavidromeLibraryPrefsInstance>(cb);
+        inst->Create(parent);
+        return inst;
+    }
+    const char* get_name() override { return "Navidrome"; }
+    // Match macOS guid_library_prefs (…01,0x09) for cross-platform tidiness.
+    GUID        get_guid() override {
+        return { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x09} };
+    }
+    GUID        get_parent_guid() override { return preferences_page::guid_media_library; }
+};
+FB2K_SERVICE_FACTORY(NavidromeLibraryPrefsFactory);
+
+// ---------------------------------------------------------------------------
 // Main menu: File > Open Navidrome Browser
 // ---------------------------------------------------------------------------
 class NavidromeMenuCmd : public mainmenu_commands {
