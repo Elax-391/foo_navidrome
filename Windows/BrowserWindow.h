@@ -18,8 +18,11 @@ struct NavidromeNode {
     std::string id;
     std::string displayName;
     std::string subtitle;    // artist name for albums/songs
+    std::string album;       // album name for songs
     std::string coverArtId;
+    std::string suffix;      // codec suffix (mp3/flac/…) for songs
     int         track        = 0;
+    int         year         = 0;
     double      duration     = 0.0;
     bool        childrenLoaded = false;
     bool        isLoading    = false;

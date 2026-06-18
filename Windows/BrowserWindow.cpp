@@ -277,8 +277,11 @@ LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
                 n->id             = s.id;
                 n->displayName    = s.title;
                 n->subtitle       = s.artist;
+                n->album          = s.album;
                 n->coverArtId     = s.coverArtId;
+                n->suffix         = s.suffix;
                 n->track          = s.track;
+                n->year           = s.year;
                 n->duration       = s.duration;
                 n->childrenLoaded = true;
                 payload->nodes.push_back(n);
@@ -381,7 +384,11 @@ void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
             n->type           = NavidromeNode::Song;
             n->id             = s.id;
             n->displayName    = s.title + " — " + s.artist;
+            n->subtitle       = s.artist;
+            n->album          = s.album;
             n->coverArtId     = s.coverArtId;
+            n->track          = s.track;
+            n->year           = s.year;
             n->duration       = s.duration;
             n->childrenLoaded = true;
             payload->nodes.push_back(n);
@@ -408,7 +415,10 @@ void BrowserWindow::collectSongsDeep(std::shared_ptr<NavidromeNode> node,
                 auto n = std::make_shared<NavidromeNode>();
                 n->type = NavidromeNode::Song; n->id = s.id;
                 n->displayName = s.title; n->subtitle = s.artist;
+                n->album = s.album;
                 n->coverArtId = s.coverArtId; n->track = s.track;
+                n->suffix = s.suffix;
+                n->year = s.year;
                 n->duration = s.duration; n->childrenLoaded = true;
                 out.push_back(n);
             }
@@ -454,7 +464,9 @@ void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> son
         file_info_impl info;
         if (!node->displayName.empty()) info.meta_set("title",  node->displayName.c_str());
         if (!node->subtitle.empty())    info.meta_set("artist", node->subtitle.c_str());
+        if (!node->album.empty())       info.meta_set("album",  node->album.c_str());
         if (node->track > 0)            info.meta_set("tracknumber", pfc::format_int(node->track));
+        if (node->year > 0)             info.meta_set("date",   pfc::format_int(node->year));
         if (node->duration > 0)         info.set_length(node->duration);
         hints->add_hint(handle, info, filestats_invalid, true);
     }
