@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/santiagorod92/foo_navidrome/compare/v1.2.0...v1.2.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **windows:** make the Windows release build green ([9e57c75](https://github.com/santiagorod92/foo_navidrome/commit/9e57c75fcdf36faf544c5156cf2f6f9adfacd03b))
+
 ## [1.2.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.1.0...v1.2.0) (2026-06-18)
 
 
