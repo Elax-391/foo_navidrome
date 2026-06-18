@@ -1,3 +1,14 @@
+## [1.2.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.1.0...v1.2.0) (2026-06-18)
+
+
+### Features
+
+* add an Enter shortcut to queue, play, and close the browser ([a972e89](https://github.com/santiagorod92/foo_navidrome/commit/a972e89a19dbd5da0d13f2f309e1496018db2618))
+* send custom HTTP headers (Cloudflare Access) on every request ([dd6b6c7](https://github.com/santiagorod92/foo_navidrome/commit/dd6b6c7aec414eb9ce5109c153c54a895dbfd647))
+* start playback honoring the Playback > Order setting ([4564f65](https://github.com/santiagorod92/foo_navidrome/commit/4564f65cb7c620feb0e6fb70b898516655b3960e))
+* **windows:** add a Navidrome page under Preferences > Media Library ([178b767](https://github.com/santiagorod92/foo_navidrome/commit/178b767ba91936e5a8d28cc279dbee2c7304db53))
+* **windows:** show album and year in the browser playlist ([3638a9a](https://github.com/santiagorod92/foo_navidrome/commit/3638a9a3aabf68038b17a2f577a42ac4c5e7af53))
+
 ## [1.1.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.0.1...v1.1.0) (2026-05-23)
 
 
