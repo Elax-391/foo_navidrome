@@ -42,7 +42,11 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # windows-2022 ships VS 2022 (v143) with the ATL/MFC component preinstalled.
+    # windows-latest moved to VS 2026, which has no ATL — building there meant a
+    # slow `vs_installer modify` on every run. Pinning to windows-2022 gets ATL
+    # for free; WTL (atlapp.h, not in any VS image) is vendored in the repo.
+    runs-on: windows-2022
 
     outputs:
       artifact-name: ${{ steps.pkg.outputs.artifact_name }}
@@ -110,8 +114,32 @@ jobs:
           echo "VERSION=$V" >> "$GITHUB_ENV"
           echo "version_generated.h -> COMPONENT_VERSION \"$V\""
 
+      # The SDK helpers/shared projects include WTL headers (<atlapp.h>, etc.),
+      # which ship in no Visual Studio image. WTL is vendored in the repo
+      # (Windows/third_party/wtl) so there's no per-run download. Drop a root
+      # Directory.Build.targets that prepends its Include dir to IncludePath for
+      # every project in the build (SDK + ours) — MSBuild auto-imports that file
+      # from the workspace root the .vcxproj files sit under. (ATL itself is
+      # already present via the windows-2022 image.)
+      - name: Wire vendored WTL into the include path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wtl = "$env:GITHUB_WORKSPACE\foobar2000\foo_navidrome\Windows\third_party\wtl\Include"
+          if (-not (Test-Path "$wtl\atlapp.h")) { Write-Error "vendored WTL missing: $wtl\atlapp.h"; exit 1 }
+          Write-Host "WTL include: $wtl"
+          # Directory.Build.targets is imported last (after the Cpp targets have
+          # built IncludePath), so prepending here reliably wins.
+          @"
+          <Project>
+            <PropertyGroup>
+              <IncludePath>$wtl;`$(IncludePath)</IncludePath>
+            </PropertyGroup>
+          </Project>
+          "@ | Set-Content -Path "$env:GITHUB_WORKSPACE\Directory.Build.targets" -Encoding utf8
+
       - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v3
 
       - name: Build Release|x64
         shell: pwsh
@@ -121,9 +149,14 @@ jobs:
           # solution-less build emits to a known path (<here>\Release\).
           $sln = "$PWD\"
           $log = "$env:RUNNER_TEMP\msbuild.log"
+          # Retarget every project to v143 — the SDK projects pin v142 (VS 2019),
+          # which windows-2022 no longer ships, while ATL is preinstalled for
+          # v143. A global override unifies the SDK projects and ours onto the
+          # one toolset present with ATL.
           msbuild Windows\foo_navidrome.vcxproj `
             /p:Configuration=Release `
             /p:Platform=x64 `
+            /p:PlatformToolset=v143 `
             /p:SolutionDir=$sln `
             /m /nologo /v:minimal `
             /flp:"logfile=$log;verbosity=detailed" `
@@ -141,7 +174,7 @@ jobs:
 
       - name: Upload msbuild log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: msbuild-log
           path: ${{ runner.temp }}/msbuild.log
@@ -172,7 +205,7 @@ jobs:
       # release.yml grabs the .fb2k-component; win-test.sh drops the raw DLL
       # straight into the Wine user-components dir.
       - name: Upload component artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-component
           path: |

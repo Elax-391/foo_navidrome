@@ -70,6 +70,8 @@
       <AdditionalIncludeDirectories>
         .;
         ..;
+        ../..;
+        ../../..;
         ../../SDK;
         ../../helpers;
         ../../shared;
@@ -140,19 +142,19 @@
   <!-- SDK project references (adjust paths if your SDK layout differs) -->
   <ItemGroup>
     <ProjectReference Include="..\..\SDK\foobar2000_SDK.vcxproj">
-      <Project>{some-guid-here}</Project>
+      <Project>{E8091321-D79D-4575-86EF-064EA1A4A20D}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\helpers\foobar2000_SDK_helpers.vcxproj">
-      <Project>{some-guid-here}</Project>
+      <Project>{EE47764E-A202-4F85-A767-ABDAB4AFF35F}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\shared\shared.vcxproj">
-      <Project>{some-guid-here}</Project>
+      <Project>{054C606B-17BF-4540-AC4E-A9A7243628B8}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\foobar2000_component_client\foobar2000_component_client.vcxproj">
-      <Project>{some-guid-here}</Project>
+      <Project>{71AD2674-065B-48F5-B8B0-E1F9D3892081}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\..\pfc\pfc.vcxproj">
-      <Project>{some-guid-here}</Project>
+      <Project>{EBFFFB4E-261D-44D3-B89C-957B31A0BF9C}</Project>
     </ProjectReference>
   </ItemGroup>
 
