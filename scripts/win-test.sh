@@ -114,7 +114,12 @@ trap 'rm -rf "$TMP"' EXIT
 echo "==> downloading artifact '$ARTIFACT' ..."
 gh run download "$RUN_ID" --name "$ARTIFACT" --dir "$TMP"
 
-DLL="$(find "$TMP" -name foo_navidrome.dll -type f | head -n1)"
+# The artifact now carries both the x86 (root) and x64 (x64/) DLLs. The local
+# Wine foobar2000 is x64, so install the x64 one; fall back to any match.
+DLL="$(find "$TMP" -path '*/x64/foo_navidrome.dll' -type f | head -n1)"
+if [ -z "$DLL" ]; then
+  DLL="$(find "$TMP" -name foo_navidrome.dll -type f | head -n1)"
+fi
 if [ -z "$DLL" ]; then
   echo "ERROR: foo_navidrome.dll not found in the artifact:" >&2
   find "$TMP" -type f >&2

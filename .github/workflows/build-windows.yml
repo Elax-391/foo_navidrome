@@ -1,7 +1,9 @@
 name: Build Windows
 
-# Builds the Windows x64 foo_navidrome.dll and packages it as a
-# .fb2k-component. Two entry points:
+# Builds the Windows foo_navidrome.dll for x64 + x86 (Win32) and packages them
+# into a single .fb2k-component (x86 at the zip root, x64 under x64/ — the
+# layout foobar2000 v2 expects; Windows ARM64 runs the x64 build via emulation,
+# so no native arm binary is needed). Two entry points:
 #
 #   * workflow_call  — invoked by release.yml to attach the component to a
 #                      GitHub release (caller passes the tag ref + version).
@@ -9,8 +11,8 @@ name: Build Windows
 #                      download the resulting artifact and install it into a
 #                      local Wine foobar2000 without cutting a release.
 #
-# Either way the job uploads a `windows-component` artifact containing both the
-# packaged .fb2k-component and the raw x64/foo_navidrome.dll.
+# Either way the job uploads a `windows-component` artifact containing the
+# packaged .fb2k-component plus the raw x86 (root) and x64/ DLLs.
 
 on:
   workflow_call:
@@ -141,36 +143,49 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 
-      - name: Build Release|x64
+      - name: Build Release (x64 + Win32)
         shell: pwsh
         working-directory: foobar2000/foo_navidrome
         run: |
-          # OutDir is $(SolutionDir)$(Configuration)\; pin SolutionDir so a
-          # solution-less build emits to a known path (<here>\Release\).
+          $ErrorActionPreference = 'Stop'
           $sln = "$PWD\"
           $log = "$env:RUNNER_TEMP\msbuild.log"
-          # Retarget every project to v143 — the SDK projects pin v142 (VS 2019),
-          # which windows-2022 no longer ships, while ATL is preinstalled for
-          # v143. A global override unifies the SDK projects and ours onto the
-          # one toolset present with ATL.
-          msbuild Windows\foo_navidrome.vcxproj `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:PlatformToolset=v143 `
-            /p:SolutionDir=$sln `
-            /m /nologo /v:minimal `
-            /flp:"logfile=$log;verbosity=detailed" `
-            "/clp:ErrorsOnly;Summary"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "===== MSBuild FAILED (rc=$LASTEXITCODE) — error lines ====="
-            if (Test-Path $log) { Select-String -Path $log -Pattern 'error|fatal' | Select-Object -Last 60 | ForEach-Object { $_.Line } }
-            exit $LASTEXITCODE
+          $dist = "$PWD\dist"
+          # .fb2k-component arch layout: 32-bit (x86) DLL at the zip root,
+          # 64-bit under x64/. Windows ARM64 transparently runs the x64 DLL via
+          # emulation, so no native arm build is required. Build each arch into
+          # its own OutDir so the two foo_navidrome.dll don't clobber each other.
+          $targets = @(
+            @{ Platform = 'x64';   ZipSub = 'x64' },
+            @{ Platform = 'Win32'; ZipSub = ''    }
+          )
+          foreach ($t in $targets) {
+            $out = "$PWD\out\$($t.Platform)\"
+            # Retarget every project to v143 — the SDK projects pin v142 (VS
+            # 2019), which windows-2022 no longer ships, while ATL is
+            # preinstalled for v143. A global override unifies the SDK projects
+            # and ours onto the one toolset present with ATL.
+            msbuild Windows\foo_navidrome.vcxproj `
+              /p:Configuration=Release `
+              /p:Platform=$($t.Platform) `
+              /p:PlatformToolset=v143 `
+              /p:SolutionDir=$sln `
+              /p:OutDir=$out `
+              /m /nologo /v:minimal `
+              /flp:"logfile=$log;verbosity=detailed;append" `
+              "/clp:ErrorsOnly;Summary"
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "===== MSBuild FAILED for $($t.Platform) (rc=$LASTEXITCODE) — error lines ====="
+              if (Test-Path $log) { Select-String -Path $log -Pattern 'error|fatal' | Select-Object -Last 60 | ForEach-Object { $_.Line } }
+              exit $LASTEXITCODE
+            }
+            $dll = "$out\foo_navidrome.dll"
+            if (-not (Test-Path $dll)) { Write-Error "foo_navidrome.dll not found for $($t.Platform) at $dll"; exit 1 }
+            $destDir = if ($t.ZipSub) { "$dist\$($t.ZipSub)" } else { $dist }
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            Copy-Item $dll "$destDir\foo_navidrome.dll" -Force
+            Write-Host "built $($t.Platform) -> $destDir\foo_navidrome.dll"
           }
-          $dll = Get-ChildItem -Path . -Recurse -Filter foo_navidrome.dll |
-                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $dll) { Write-Error "foo_navidrome.dll not found after build"; exit 1 }
-          Write-Host "built: $($dll.FullName)"
-          "DLL_PATH=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload msbuild log on failure
         if: failure()
@@ -181,35 +196,36 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # foobar2000 v2 reads 64-bit Windows components from x64/ inside the
-      # .fb2k-component zip (32-bit at root, mac/ for the macOS bundle).
+      # foobar2000 v2 .fb2k-component layout: 32-bit (x86) DLL at the zip root,
+      # 64-bit under x64/ (mac/ carries the macOS bundle, added by the release
+      # merge step). Package both Windows arches into one zip.
       - name: Package .fb2k-component
         id: pkg
         shell: pwsh
         working-directory: foobar2000/foo_navidrome
         run: |
+          $ErrorActionPreference = 'Stop'
           $dist = "$PWD\dist"
-          New-Item -ItemType Directory -Force -Path "$dist\x64" | Out-Null
-          Copy-Item "$env:DLL_PATH" "$dist\x64\foo_navidrome.dll"
-          $asset = "foo_navidrome_win-x64_$env:VERSION.fb2k-component"
+          $asset = "foo_navidrome_win_$env:VERSION.fb2k-component"
           $zip = "$dist\$asset"
-          # Zip the x64/ folder (Compress-Archive writes x64/foo_navidrome.dll
-          # at the archive root); rename .zip -> .fb2k-component.
-          Compress-Archive -Path "$dist\x64" -DestinationPath "$dist\_tmp.zip" -Force
+          # Archive the root x86 DLL plus the x64/ subfolder; rename the .zip to
+          # .fb2k-component.
+          Compress-Archive -Path "$dist\foo_navidrome.dll","$dist\x64" -DestinationPath "$dist\_tmp.zip" -Force
           Move-Item "$dist\_tmp.zip" $zip -Force
           "asset_name=$asset"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "artifact_name=windows-component" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "packaged: $zip"
 
-      # Upload both the packaged component and the raw DLL so consumers can pick:
-      # release.yml grabs the .fb2k-component; win-test.sh drops the raw DLL
-      # straight into the Wine user-components dir.
+      # Upload both the packaged component and the raw DLLs so consumers can
+      # pick: release.yml's merge step grabs the raw x86 + x64 DLLs; win-test.sh
+      # drops the x64 DLL straight into the Wine user-components dir.
       - name: Upload component artifact
         uses: actions/upload-artifact@v6
         with:
           name: windows-component
           path: |
-            foobar2000/foo_navidrome/dist/foo_navidrome_win-x64_*.fb2k-component
+            foobar2000/foo_navidrome/dist/foo_navidrome_win_*.fb2k-component
+            foobar2000/foo_navidrome/dist/foo_navidrome.dll
             foobar2000/foo_navidrome/dist/x64/foo_navidrome.dll
           if-no-files-found: error
           retention-days: 14

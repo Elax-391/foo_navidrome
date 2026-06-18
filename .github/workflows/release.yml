@@ -132,17 +132,21 @@ jobs:
           retention-days: 7
 
   # --------------------------------------------------------------------------
-  # Windows x64 component, attached to the SAME GitHub release.
+  # Windows x86 + x64 binaries, MERGED into one multi-platform .fb2k-component.
   #
   # The actual build lives in the reusable build-windows.yml workflow (also
   # dispatchable on its own for local test builds via win-test.sh). Here we
-  # call it for the tag semantic-release just created, then attach its
-  # .fb2k-component artifact to the existing release.
+  # call it for the tag semantic-release just created, then merge-component
+  # folds its Windows DLLs into the macOS zip semantic-release already attached,
+  # so the release ships ONE foo_navidrome_<ver>.fb2k-component that runs on
+  # macOS, Windows x86, Windows x64 — and Windows ARM64 via x64 emulation (the
+  # layout official components use: mac/<bundle> + <x86 dll at root> + x64/<dll>
+  # in the same zip; foobar picks the right binary at load time).
   #
   # Both jobs are gated on released_version, so they no-op when no release was
   # published. They are NON-GATING for the release itself: the macOS asset has
   # already shipped by the time these run, so a Windows compile failure (the
-  # sources are still mid-port) just leaves the release without a Windows asset.
+  # sources are still mid-port) just leaves the release with the mac-only zip.
   # --------------------------------------------------------------------------
   build-windows:
     needs: release
@@ -152,7 +156,7 @@ jobs:
       ref: v${{ needs.release.outputs.released_version }}
       version: ${{ needs.release.outputs.released_version }}
 
-  attach-windows:
+  merge-component:
     needs: [release, build-windows]
     if: needs.release.outputs.released_version != ''
     runs-on: ubuntu-latest
@@ -163,13 +167,41 @@ jobs:
           name: ${{ needs.build-windows.outputs.artifact-name }}
           path: dist
 
-      - name: Attach .fb2k-component to the release
+      - name: Merge mac bundle + win-x64 DLL into one .fb2k-component
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.release.outputs.released_version }}
-          ASSET: ${{ needs.build-windows.outputs.asset-name }}
         run: |
           set -euo pipefail
-          gh release upload "v${VERSION}" "dist/${ASSET}" \
+          ASSET="foo_navidrome_${VERSION}.fb2k-component"
+
+          # Pull down the mac-only zip semantic-release just attached. It
+          # already contains mac/foo_navidrome.component (ad-hoc signed).
+          gh release download "v${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET" \
+            --dir .
+
+          # The win artifact ships the raw DLLs at dist/foo_navidrome.dll (x86)
+          # and dist/x64/foo_navidrome.dll (x64) — see build-windows.yml.
+          test -f dist/foo_navidrome.dll
+          test -f dist/x64/foo_navidrome.dll
+          mkdir -p x64
+          cp dist/foo_navidrome.dll foo_navidrome.dll
+          cp dist/x64/foo_navidrome.dll x64/foo_navidrome.dll
+
+          # Grow the existing zip with the Windows entries: x86 DLL at the root,
+          # x64 DLL under x64/ (Windows ARM64 runs the x64 build via emulation,
+          # so no arm entry is needed). `zip -g` appends without rewriting the
+          # mac/ entries, so the macOS bundle's bytes (and its ad-hoc code
+          # signature) stay byte-for-byte intact.
+          zip -g "$ASSET" foo_navidrome.dll x64/foo_navidrome.dll
+          echo "merged multi-platform component contents:"
+          unzip -l "$ASSET"
+
+          # Replace the mac-only asset with the merged one (same filename), and
+          # relabel it to reflect multi-platform support.
+          gh release upload "v${VERSION}" \
+            "${ASSET}#foo_navidrome ${VERSION} (macOS + Windows x86/x64, foobar2000 v2)" \
             --clobber --repo "$GITHUB_REPOSITORY"
-          echo "uploaded dist/${ASSET} to release v${VERSION}"
+          echo "uploaded multi-platform $ASSET to release v${VERSION}"
