@@ -488,8 +488,15 @@ void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> son
     pm->playlist_add_items(pl, tracks, pfc::bit_array_false());
 
     if (play && tracks.get_count() > 0) {
+        // Start playback honoring the user's Playback > Order setting (Shuffle,
+        // Random, Default, …). track_command_play asks the active playback order
+        // for the starting track; the focus biases in-order modes to the first
+        // newly-added track. (playlist_execute_default_action would instead pin
+        // that exact track and ignore the order.)
         pm->set_active_playlist(pl);
-        pm->playlist_execute_default_action(pl, insertPos);
+        pm->set_playing_playlist(pl);
+        pm->playlist_set_focus_item(pl, insertPos);
+        playback_control::get()->start(playback_control::track_command_play);
     }
 
     std::string msg = "Added " + std::to_string(tracks.get_count()) + " tracks";

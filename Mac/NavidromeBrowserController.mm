@@ -3,6 +3,7 @@
 #include <SDK/playlist.h>
 #include <SDK/metadb.h>
 #include <SDK/playable_location.h>
+#include <SDK/playback_control.h>
 
 // ---------------------------------------------------------------------------
 // Helper: format seconds as M:SS
@@ -570,8 +571,15 @@ static NSString *formatDuration(NSTimeInterval secs) {
         pm->playlist_add_items(activePlaylist, *tracksCopy, pfc::bit_array_false());
 
         if (doPlay && tracksCopy->get_count() > 0) {
+            // Start playback honoring the user's Playback > Order setting
+            // (Shuffle, Random, Default, …). track_command_play asks the active
+            // playback order for the starting track; the focus biases in-order
+            // modes to the first newly-added track. (playlist_execute_default_action
+            // would instead pin that exact track and ignore the order.)
             pm->set_active_playlist(activePlaylist);
-            pm->playlist_execute_default_action(activePlaylist, insertPos);
+            pm->set_playing_playlist(activePlaylist);
+            pm->playlist_set_focus_item(activePlaylist, insertPos);
+            playback_control::get()->start(playback_control::track_command_play);
         }
     });
 
