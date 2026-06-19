@@ -1,9 +1,10 @@
 name: Build Windows
 
-# Builds the Windows foo_navidrome.dll for x64 + x86 (Win32) and packages them
-# into a single .fb2k-component (x86 at the zip root, x64 under x64/ — the
-# layout foobar2000 v2 expects; Windows ARM64 runs the x64 build via emulation,
-# so no native arm binary is needed). Two entry points:
+# Builds the Windows foo_navidrome.dll for x64 + x86 (Win32) + ARM64EC and
+# packages them into a single .fb2k-component (x86 at the zip root, x64 under
+# x64/, ARM64EC under arm64ec/ — the layout foobar2000 v2 expects). foobar2000
+# on ARM prefers the native arm64ec/ binary; if it's absent it falls back to
+# running x64 via emulation. Two entry points:
 #
 #   * workflow_call  — invoked by release.yml to attach the component to a
 #                      GitHub release (caller passes the tag ref + version).
@@ -152,12 +153,17 @@ jobs:
           $log = "$env:RUNNER_TEMP\msbuild.log"
           $dist = "$PWD\dist"
           # .fb2k-component arch layout: 32-bit (x86) DLL at the zip root,
-          # 64-bit under x64/. Windows ARM64 transparently runs the x64 DLL via
-          # emulation, so no native arm build is required. Build each arch into
-          # its own OutDir so the two foo_navidrome.dll don't clobber each other.
+          # 64-bit under x64/, native Windows-on-ARM under arm64ec/. Build each
+          # arch into its own OutDir so the foo_navidrome.dll don't clobber each
+          # other.
+          # arm64ec/ is the native Windows-on-ARM binary; foobar2000 prefers it
+          # over the x64 one on ARM (x64 otherwise runs via emulation). The
+          # windows-2022 image ships the v143 ARM64 tools + ATL ARM64, and the
+          # SDK projects already define Release|ARM64EC, so no extra setup.
           $targets = @(
-            @{ Platform = 'x64';   ZipSub = 'x64' },
-            @{ Platform = 'Win32'; ZipSub = ''    }
+            @{ Platform = 'x64';     ZipSub = 'x64'     },
+            @{ Platform = 'ARM64EC'; ZipSub = 'arm64ec' },
+            @{ Platform = 'Win32';   ZipSub = ''        }
           )
           foreach ($t in $targets) {
             $out = "$PWD\out\$($t.Platform)\"
@@ -197,8 +203,8 @@ jobs:
           retention-days: 7
 
       # foobar2000 v2 .fb2k-component layout: 32-bit (x86) DLL at the zip root,
-      # 64-bit under x64/ (mac/ carries the macOS bundle, added by the release
-      # merge step). Package both Windows arches into one zip.
+      # 64-bit under x64/, ARM64EC under arm64ec/ (mac/ carries the macOS bundle,
+      # added by the release merge step). Package all Windows arches into one zip.
       - name: Package .fb2k-component
         id: pkg
         shell: pwsh
@@ -210,7 +216,7 @@ jobs:
           $zip = "$dist\$asset"
           # Archive the root x86 DLL plus the x64/ subfolder; rename the .zip to
           # .fb2k-component.
-          Compress-Archive -Path "$dist\foo_navidrome.dll","$dist\x64" -DestinationPath "$dist\_tmp.zip" -Force
+          Compress-Archive -Path "$dist\foo_navidrome.dll","$dist\x64","$dist\arm64ec" -DestinationPath "$dist\_tmp.zip" -Force
           Move-Item "$dist\_tmp.zip" $zip -Force
           "asset_name=$asset"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "artifact_name=windows-component" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -227,5 +233,6 @@ jobs:
             foobar2000/foo_navidrome/dist/foo_navidrome_win_*.fb2k-component
             foobar2000/foo_navidrome/dist/foo_navidrome.dll
             foobar2000/foo_navidrome/dist/x64/foo_navidrome.dll
+            foobar2000/foo_navidrome/dist/arm64ec/foo_navidrome.dll
           if-no-files-found: error
           retention-days: 14
