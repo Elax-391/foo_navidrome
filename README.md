@@ -4,9 +4,7 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 
 ## Installation (end users)
 
-1. Download the `.fb2k-component` for your platform from the [Releases](../../releases) page:
-   - **macOS:** `foo_navidrome_<version>.fb2k-component`
-   - **Windows (and Linux via Wine):** `foo_navidrome_<version>_win-x64.fb2k-component`
+1. Download `foo_navidrome_<version>.fb2k-component` from the [Releases](../../releases) page. It's a **single multi-platform component** — one file ships macOS, Windows x86, Windows x64, and native Windows-on-ARM (ARM64EC). foobar2000 picks the right binary at load time.
 2. Drag the file onto foobar2000, or double-click it — foobar2000 installs it automatically
 3. Restart foobar2000
 4. Go to **Preferences › Tools › Navidrome** and enter your server URL and credentials
@@ -27,15 +25,16 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 
 | Platform | Status |
 |----------|--------|
-| macOS    | ✅ Supported — shipped (Xcode, foobar2000 v2 for Mac) |
-| Windows  | ✅ Builds & installs — runtime testing in progress (Visual Studio 2022, or cross-compiled) |
-| Linux    | ⚙️ Runs under Wine — loads the Windows x64 build |
+| macOS         | ✅ Supported — shipped (Xcode, foobar2000 v2 for Mac) |
+| Windows x64   | ✅ Supported — runtime-verified on native foobar2000 for Windows (Visual Studio 2022, or cross-compiled on Linux) |
+| Windows x86   | ✅ Supported — same build, 32-bit binary shipped in the component |
+| Windows ARM64 | ✅ Supported — native ARM64EC binary, runtime-verified |
+| Linux         | ⚙️ Runs under Wine — loads the Windows x64 build |
 
-> The component now compiles, links, and installs as an x64 foobar2000 component —
-> natively with Visual Studio, on CI, or **cross-compiled on Linux** with clang-cl
-> (see [Building on Linux](#building-on-linux-wine)). The Windows UI and the
-> `navidrome://` URI-scheme port are newer than the macOS path and are still being
-> validated in-app, so a few rough edges are expected.
+> A single `.fb2k-component` ships every platform: macOS bundle, Windows x86, x64,
+> and a native ARM64EC binary; foobar2000 selects the right one at load. The Windows
+> binaries build natively with Visual Studio, on CI, or **cross-compiled on Linux**
+> with clang-cl (see [Building on Linux](#building-on-linux-wine)).
 
 ---
 
@@ -129,17 +128,18 @@ Tracks land in the playlist as `navidrome://track/<id>?...` URIs. The component 
 
 1. Open `Windows/foo_navidrome.vcxproj` in Visual Studio
 2. Update the `<ProjectReference>` GUIDs in the `.vcxproj` to match your local SDK project GUIDs
-3. Build in **Release | x64** configuration
+3. Build in **Release | x64** configuration (the `.vcxproj` also defines **Win32** and **ARM64EC** if you need those binaries; CI builds all three)
 4. Copy `foo_navidrome.dll` to your foobar2000 components folder:
    ```
    %APPDATA%\foobar2000\user-components\foo_navidrome\
    ```
 5. Restart foobar2000
 
-> No Windows machine? You can **cross-compile the same x64 DLL on Linux** (see
-> below), or run `./scripts/win-test.sh` to build it on a GitHub Actions Windows
-> runner (real MSVC/MSBuild) and download the artifact. Each GitHub release also
-> ships a `foo_navidrome_<version>_win-x64.fb2k-component` built by CI.
+> CI builds all three Windows arches (x86, x64, ARM64EC) and merges them with the
+> macOS bundle into one `foo_navidrome_<version>.fb2k-component` per release.
+> No Windows machine? **Cross-compile the x64 DLL on Linux** (see below), or run
+> `./scripts/win-test.sh` to build on a GitHub Actions Windows runner (real
+> MSVC/MSBuild) and download the artifact.
 
 ---
 

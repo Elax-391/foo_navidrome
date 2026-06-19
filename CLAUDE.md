@@ -2,7 +2,7 @@
 
 ## Overview
 
-foobar2000 v2 component that browses and streams from Navidrome / Subsonic-compatible servers. Cross-platform target: macOS (shipped) and Windows (in development). Two entry points on macOS: **File › Open Navidrome Browser** and **Preferences › Media Library › Library viewers › Navidrome**.
+foobar2000 v2 component that browses and streams from Navidrome / Subsonic-compatible servers. Cross-platform: macOS (shipped) and Windows x86/x64/ARM64EC (shipped, runtime-verified on native Windows). One `.fb2k-component` carries all platforms. Two entry points on macOS: **File › Open Navidrome Browser** and **Preferences › Media Library › Library viewers › Navidrome**.
 
 ## Architecture
 
