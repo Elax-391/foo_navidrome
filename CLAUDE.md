@@ -90,6 +90,8 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 
 - Linux is intentionally unsupported (foobar2000 has no Linux build).
 
+- **License: MIT for our code only.** `LICENSE` (MIT, © Santiago Rodriguez) covers this repo's source. The foobar2000 SDK + PFC are under the foobar2000 author's own terms, NOT MIT, and are not committed here (fetched at build time) — the README License section states this explicitly. Required for the official components listing: we can't re-license the SDK.
+
 - The Subsonic salt is stored in `cfg_salt` with default `"fb2k_navidrome"` — kept configurable so token reuse can be invalidated if needed.
 
 - GUIDs for all services live as `static constexpr GUID` in the namespace that registers them. The input handler's GUID is in `NavidromeInput.mm`; the others are in `NavidromePlugin.mm` (lines 11-18). Must be regenerated when forking the component.

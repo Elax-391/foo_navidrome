@@ -44,16 +44,17 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 
 - [foobar2000 v2 for Mac](https://www.foobar2000.org/mac)
 - Xcode 14+
-- foobar2000 SDK — clone these repos as siblings of this repo:
+- foobar2000 SDK — source the SDK subdirs and `pfc/` from [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified) (an unmodified mirror of the official SDK; crucially it ships `helpers-mac/`, which the macOS build needs and some other mirrors omit). Arrange them as siblings of this repo:
 
 ```
 foobar2000/
-  SDK/          ← https://github.com/marc2k3/foobar2000-sdk (or official SDK)
+  SDK/
   helpers/
+  helpers-mac/                  ← macOS only (NSView+embed.m); from the reupen mirror
   shared/
   foobar2000_component_client/
-  foo_navidrome/   ← this repo
-pfc/              ← https://github.com/marc2k3/pfc  (sibling of foobar2000/)
+  foo_navidrome/                ← this repo
+pfc/                            ← sibling of foobar2000/ (also from the reupen mirror)
 ```
 
 The expected layout relative to `foo_navidrome/`:
@@ -253,12 +254,49 @@ foo_navidrome/
 
 ## Contributing
 
-Pull requests are welcome! Areas where help is especially appreciated:
+Pull requests are welcome. This section is the fast path from a fresh clone to a merged change.
 
-- Windows UI polish and testing
-- HTTPS certificate handling on Windows
-- Playlist management improvements (e.g. create named playlist per artist)
-- Offline/caching support
+### Getting set up
+
+1. Fork and clone the repo, then lay out the sibling SDK directories described under [Prerequisites](#prerequisites) — the project will not build without `pfc/` and `foobar2000/{SDK,helpers,helpers-mac,shared,foobar2000_component_client}` next to it. The CI workflow clones [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified) into exactly that layout if you want a reference.
+2. Pick your platform's build path: [macOS](#building-on-macos) (Xcode), [Windows](#building-on-windows) (Visual Studio 2022), or [Linux → Windows cross-compile](#building-on-linux-wine) (clang-cl + Wine, the current primary dev environment).
+3. Read [`CLAUDE.md`](CLAUDE.md) before touching code — it documents the architecture, the per-platform file map, the design decisions, and a long list of hard-won gotchas (URI parsing traps, dual-mount `NSViewController` rules, CI log handling, etc.). It will save you hours.
+
+### How the code is laid out
+
+The component is a **shared C++ core + per-platform UI/HTTP layers** — see [Project Structure](#project-structure) for the full file map. Quick orientation:
+
+- **Cross-platform / pure C++:** `main.cpp`, `stdafx.h`, `SubsonicTypes.h`.
+- **macOS (ObjC++):** `SubsonicClient.mm` (NSURLSession HTTP), `NavidromePlugin.mm` (service registration), `NavidromeInput.mm` (the `navidrome://` input handler), `NavidromeArtExtractor.mm` (album art), `Mac/*` (the AppKit browser + preferences UI).
+- **Windows (Win32/ATL):** `Windows/SubsonicClientWin.cpp` (WinHTTP HTTP), `Windows/NavidromePluginWin.cpp`, `Windows/BrowserWindow.*`.
+
+If you fix a bug in the data layer, check whether the **macOS and Windows HTTP clients both need it** — they are separate implementations of the same Subsonic protocol.
+
+### Key architectural concepts to know
+
+- **`navidrome://track/<id>?...` URI scheme.** Tracks are queued as these URIs, not raw HTTP URLs, so playlists survive credential/server changes. Metadata is embedded in the query string; the stream URL is resolved at decode time. **Any code that parses these URIs must be updated together when the scheme changes** — `NavidromeInput`, the art extractor's `is_our_path`, etc. The host-vs-path RFC-3986 trap is documented in `CLAUDE.md`.
+- **GUIDs.** Every registered service has a hardcoded `static constexpr GUID`. **If you fork this component you must regenerate all of them** (`NavidromePlugin.mm` and `NavidromeInput.mm`) — two components sharing a GUID will collide in foobar2000.
+- **Logging is the debugger.** There's no practical debugger-attach for foobar2000 components on Mac; use the `navi_log` file-logging helper (writes to `/tmp/foo_navidrome.log`, survives a crash). Remove temporary logs before submitting.
+
+### Coding conventions
+
+- Match the surrounding style (naming, comment density, indentation) rather than introducing a new one.
+- Keep platform-specific code behind the existing macOS / `Windows/` split — don't `#ifdef` platform branches into the shared core unless there's no alternative.
+- Update `CLAUDE.md` when you make a decision or hit a gotcha worth recording for the next contributor.
+
+### Commits, versioning, and PRs
+
+- Commit messages **must** follow [Conventional Commits](https://www.conventionalcommits.org/) — the release pipeline parses them to decide the version bump. See [Commit message convention](#commit-message-convention). In short: `feat:` → minor, `fix:`/`perf:`/`refactor:` → patch, `chore:`/`docs:`/`ci:`/etc. → no release, `!` or a `BREAKING CHANGE:` footer → major.
+- **Don't bump `version.txt` or edit `CHANGELOG.md` by hand** — semantic-release owns both. Your job is just well-typed commits.
+- Test on at least one platform and say which one in the PR. Cross-platform changes ideally get verified on both macOS and a Windows build (native, or cross-compiled + run under Wine — see the Linux section).
+- Keep PRs focused; one logical change per PR makes review and the auto-generated changelog far cleaner.
+
+### Good places to start
+
+- Windows UI polish and feature parity with the macOS browser (the Windows side is younger than the Mac path).
+- Playlist management (e.g. create a named foobar2000 playlist per artist/album).
+- Offline / caching support for streamed tracks.
+- Porting the Windows UI to the `navidrome://` URI-scheme architecture the macOS side uses (it currently lags behind — see `CLAUDE.md`).
 
 ## Releasing
 
@@ -298,4 +336,6 @@ This bypasses the workflow and uses the `--new-release` path of `scripts/install
 
 ## License
 
-MIT — see [LICENSE](LICENSE) file.
+This component's own source code is licensed under the **MIT License** — see the [LICENSE](LICENSE) file.
+
+It builds against the **foobar2000 SDK** and **PFC**, which are *not* covered by this license — they are distributed under their own terms by the foobar2000 author and are not included in this repository (the build fetches them separately; see the build instructions above). Redistribution of the SDK is subject to those terms.
