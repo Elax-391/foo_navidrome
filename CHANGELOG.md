@@ -1,3 +1,10 @@
+## [1.3.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.2.1...v1.3.0) (2026-07-21)
+
+
+### Features
+
+* right-click context menu and embedded Windows browser ([58305b7](https://github.com/santiagorod92/foo_navidrome/commit/58305b71dbd74a1579dca9d54782faf296215c4a))
+
 ## [1.2.1](https://github.com/santiagorod92/foo_navidrome/compare/v1.2.0...v1.2.1) (2026-06-18)
 
 
