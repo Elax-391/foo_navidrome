@@ -48,6 +48,16 @@ void BrowserWindow::show() {
     }
 }
 
+// Inline mount for the Media Library prefs page. A fresh (non-singleton)
+// instance owned by the host; the host sizes it to fill its client area.
+void BrowserWindow::createEmbedded(HWND parent) {
+    m_embedded = true;
+    if (IsWindow()) return;
+    RECT rc{}; ::GetClientRect(parent, &rc);
+    Create(parent, rc, nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0);
+    loadArtists();
+}
+
 // ---------------------------------------------------------------------------
 // Window messages
 // ---------------------------------------------------------------------------
@@ -344,7 +354,7 @@ void BrowserWindow::queueSelected(bool play, bool closeAfter) {
             collectSongsDeep(n, songs);
         fb2k::inMainThread([this, songs, play, closeAfter]() mutable {
             enqueueNodes(std::move(songs), play);
-            if (closeAfter && IsWindow()) ShowWindow(SW_HIDE);
+            if (closeAfter && !m_embedded && IsWindow()) ShowWindow(SW_HIDE);
         });
     }).detach();
 }
@@ -358,6 +368,37 @@ void BrowserWindow::OnPlay(UINT, int, HWND) { queueSelected(true,  false); }
 LRESULT BrowserWindow::OnTreeReturn(LPNMHDR) {
     queueSelected(true, true);
     return 0;
+}
+
+// Right-click context menu on the tree — mirrors the Add/Play buttons for a
+// native feel. The menu item IDs are IDC_PLAY / IDC_ADD, so TrackPopupMenu
+// posts WM_COMMAND straight into the existing OnPlay / OnAdd handlers.
+void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
+    if (wnd.m_hWnd != m_tree.m_hWnd) { SetMsgHandled(FALSE); return; }
+
+    if (point.x == -1 && point.y == -1) {
+        // Keyboard-invoked (Shift+F10 / menu key): anchor on the selected item.
+        HTREEITEM sel = m_tree.GetSelectedItem();
+        CRect rc;
+        if (sel && m_tree.GetItemRect(sel, &rc, TRUE)) point = rc.CenterPoint();
+        else { m_tree.GetClientRect(&rc); point = rc.TopLeft(); }
+        m_tree.ClientToScreen(&point);
+    } else {
+        // Mouse: select the row under the cursor so the action targets it.
+        CPoint client(point);
+        m_tree.ScreenToClient(&client);
+        UINT flags = 0;
+        HTREEITEM hit = m_tree.HitTest(client, &flags);
+        if (hit) m_tree.SelectItem(hit);
+    }
+
+    if (selectedNodes().empty()) return;
+
+    CMenu menu;
+    menu.CreatePopupMenu();
+    menu.AppendMenu(MF_STRING, IDC_PLAY, L"Play Now");
+    menu.AppendMenu(MF_STRING, IDC_ADD,  L"Add to Playlist");
+    menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, *this);
 }
 
 void BrowserWindow::OnRefresh(UINT, int, HWND) {

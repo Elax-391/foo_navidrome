@@ -101,6 +101,19 @@ static NSString *formatDuration(NSTimeInterval secs) {
     }
     [super keyDown:event];
 }
+
+// Right-click acts on the clicked row: if it isn't already part of the
+// selection, select just that row so the context-menu actions (which operate on
+// -selectedNodes) target what the user clicked. Suppress the menu on empty space.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    NSPoint pt = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger row = [self rowAtPoint:pt];
+    if (row < 0) return nil;
+    if (![self.selectedRowIndexes containsIndex:(NSUInteger)row])
+        [self selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
+          byExtendingSelection:NO];
+    return [super menuForEvent:event];
+}
 @end
 
 @interface NavidromeBrowserController ()
@@ -170,6 +183,18 @@ static NSString *formatDuration(NSTimeInterval secs) {
     _outlineView.autoresizesOutlineColumn = NO;
     _outlineView.target = self;
     _outlineView.doubleAction = @selector(doubleClicked:);
+
+    // Right-click context menu — mirrors the bottom buttons for a native feel.
+    NSMenu *rowMenu = [[NSMenu alloc] init];
+    NSMenuItem *playItem = [rowMenu addItemWithTitle:@"Play Now"
+                                              action:@selector(playNow:)
+                                       keyEquivalent:@""];
+    playItem.target = self;
+    NSMenuItem *addItem = [rowMenu addItemWithTitle:@"Add to Playlist"
+                                             action:@selector(addToPlaylist:)
+                                      keyEquivalent:@""];
+    addItem.target = self;
+    _outlineView.menu = rowMenu;
 
     // Columns
     NSTableColumn *nameCol = [[NSTableColumn alloc] initWithIdentifier:@"name"];

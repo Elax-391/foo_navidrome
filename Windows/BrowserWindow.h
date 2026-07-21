@@ -44,6 +44,9 @@ class BrowserWindow : public CWindowImpl<BrowserWindow> {
 public:
     static BrowserWindow& get();
     void show();
+    // Create as a WS_CHILD panel filling `parent` (used by the Media Library
+    // prefs page for an inline browser, mirroring the macOS embedded mount).
+    void createEmbedded(HWND parent);
 
     DECLARE_WND_CLASS(L"foo_navidrome_BrowserWnd")
 
@@ -56,6 +59,7 @@ public:
         NOTIFY_CODE_HANDLER_EX(TVN_ITEMEXPANDING, OnTreeExpanding)
         NOTIFY_CODE_HANDLER_EX(NM_DBLCLK,        OnTreeDblClick)
         NOTIFY_CODE_HANDLER_EX(NM_RETURN,        OnTreeReturn)
+        MSG_WM_CONTEXTMENU(OnContextMenu)
         COMMAND_ID_HANDLER_EX(IDC_ADD,     OnAdd)
         COMMAND_ID_HANDLER_EX(IDC_PLAY,    OnPlay)
         COMMAND_ID_HANDLER_EX(IDC_REFRESH, OnRefresh)
@@ -80,6 +84,7 @@ private:
     LRESULT OnTreeExpanding(LPNMHDR);
     LRESULT OnTreeDblClick(LPNMHDR);
     LRESULT OnTreeReturn(LPNMHDR);
+    void    OnContextMenu(CWindow wnd, CPoint point);
     void    OnAdd(UINT, int, HWND);
     void    OnPlay(UINT, int, HWND);
     void    OnRefresh(UINT, int, HWND);
@@ -101,6 +106,10 @@ private:
     CEdit         m_search;
     CButton       m_addBtn, m_playBtn, m_refreshBtn;
     CStatic       m_status;
+
+    // True when hosted inline in the prefs page (vs. the standalone window);
+    // only the standalone window hides itself after an Enter "queue + play".
+    bool          m_embedded = false;
 
     // Keeps nodes alive; HTREEITEM lParam points into these shared_ptrs
     std::map<HTREEITEM, std::shared_ptr<NavidromeNode>> m_nodeMap;

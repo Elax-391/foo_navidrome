@@ -330,30 +330,25 @@ public:
 
     BEGIN_MSG_MAP(NavidromeLibraryPrefsInstance)
         MSG_WM_CREATE(OnCreate)
-        COMMAND_HANDLER_EX(IDC_OPEN, BN_CLICKED, OnOpen)
+        MSG_WM_SIZE(OnSize)
     END_MSG_MAP()
 
 private:
-    enum { IDC_OPEN = 2001 };
-
+    // Embed the browser inline, filling the page — parity with the macOS build
+    // (which mounts the browser view controller directly in this sub-page). A
+    // fresh BrowserWindow instance owned by this page, distinct from the
+    // standalone-window singleton used by the File menu / library_viewer.
     LRESULT OnCreate(LPCREATESTRUCT) {
-        HFONT f = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-        HWND lbl = CreateWindowW(L"STATIC",
-            L"Browse and stream your Navidrome library.",
-            WS_CHILD|WS_VISIBLE, 10, 12, 380, 18, *this, nullptr, nullptr, nullptr);
-        SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
-
-        HWND btn = CreateWindowW(L"BUTTON", L"Open Navidrome Browser",
-            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON, 10, 40, 180, 26, *this,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_OPEN)), nullptr, nullptr);
-        SendMessageW(btn, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
+        m_browser.createEmbedded(*this);
         return 0;
     }
 
-    void OnOpen(UINT, int, HWND) {
-        fb2k::inMainThread([] { BrowserWindow::get().show(); });
+    void OnSize(UINT, CSize sz) {
+        if (m_browser.IsWindow())
+            m_browser.SetWindowPos(nullptr, 0, 0, sz.cx, sz.cy, SWP_NOZORDER);
     }
 
+    BrowserWindow                  m_browser;
     preferences_page_callback::ptr m_cb;
 };
 
