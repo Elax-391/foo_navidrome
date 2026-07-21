@@ -16,7 +16,7 @@ Shared C++ core + per-platform UI/HTTP layers:
 - `NavidromeArtExtractor.mm` — implements `album_art_fallback` so Now Playing / playlists show art fetched from Navidrome
 - `Mac/NavidromeBrowserController.*` — `NSViewController` housing the Artists/Albums/Songs tree, search, action buttons. Mounted in two places: (a) directly inside the *Preferences › Media Library › Navidrome* prefs sub-page; (b) wrapped in a standalone `NSWindow` by `NavidromeShowStandaloneBrowser()` (called by the File menu and `library_viewer.activate()`). Each mount point creates a fresh controller — Cocoa requires each `NSView` to have a single superview, so the previous shared-singleton pattern would have broken dual-mount. Enqueues tracks as `navidrome://` URIs (not raw HTTP URLs).
 - `Mac/NavidromePreferencesController.*` — `NSViewController` preferences UI
-- `Windows/NavidromePluginWin.cpp`, `Windows/BrowserWindow.*` — Windows ATL equivalents (not yet ported to the URI scheme architecture)
+- `Windows/NavidromePluginWin.cpp`, `Windows/BrowserWindow.*` — Windows ATL equivalents. Ported to the `navidrome://` URI scheme (`BrowserWindow::enqueueNodes` builds `navidrome://track/` URIs; `NavidromeInputWin` decodes them). `BrowserWindow` can mount two ways like the Mac controller: a standalone window (`show()`, singleton — File menu / `library_viewer`) **and** an inline `WS_CHILD` panel (`createEmbedded()`) hosted in the *Preferences › Media Library › Navidrome* sub-page. Right-click on the tree opens a Play Now / Add to Playlist context menu (`WM_CONTEXTMENU`).
 
 GUIDs for cfg vars / prefs page / menu commands are hardcoded constants in `NavidromePlugin.mm` (lines 11–17) — must be regenerated when forking.
 
@@ -43,6 +43,10 @@ pfc/                    ← sibling of foobar2000/
 ### Windows
 
 Visual Studio 2022. `Windows/foo_navidrome.vcxproj` — must update `<ProjectReference>` GUIDs to match the local SDK projects. Build Release|x64, copy `.dll` to `%APPDATA%\foobar2000\user-components\foo_navidrome\`.
+
+### Windows testing on macOS (no PC / no Wine)
+
+`scripts/win-vm/` cross-compiles the **x64** Windows DLL on macOS (`clang-cl` + `lld-link` + `xwin` + WTL) and runtime-tests it in a headless Windows 11 ARM64 QEMU/HVF guest. `setup-mac-toolchain.sh` (once) → `fetch-win11-arm.sh` (build ISO) → `win-vm.sh install` (unattended install) → `win-vm-test.sh --launch` (build → deploy over SSH → relaunch). See `scripts/win-vm/README.md`. clang can't cross-compile ARM64EC (MSVC-only intrinsics); the x64 build runs under emulation on ARM foobar, which is sufficient for UI testing — CI still builds the real ARM64EC binary.
 
 ### Versioning + dev loop
 
@@ -144,3 +148,5 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
     sdk-license.txt  sdk-readme.html
   ```
   The staging step moves `_sdk-staging/foobar2000/<dir>` → `foobar2000/<dir>` (SDK subdirs are one level deeper than the staging root) and `_sdk-staging/pfc` → `pfc` (this one IS at the staging root). The verify step requires `helpers-mac` in the list and prints `ls -la` of both `_sdk-staging` and `_sdk-staging/foobar2000` on failure so future layout drift is debuggable.
+
+- **Testing the x64 build on ARM foobar (via `scripts/win-vm/`) has three traps** — all in `scripts/win-vm/README.md`, condensed here: (1) `clang-cl` parses a leading `/Users/...` source path as the `/U` flag → pass sources as `/Tp<path>`; (2) the local x64 build **must** use static CRT (`/MT`) — foobar-on-ARM only bundles the ARM64EC flavour of `VCRUNTIME140`/`MSVCP140`, so an emulated x64 `/MD` DLL fails to load silently; (3) install once from a `.fb2k-component` (it lands in `user-components-arm64ec/`), because a loose DLL dropped into a component folder is NOT picked up by the ARM build — after that the DLL can be hot-swapped in place. Also: the QEMU guest needs an audio device (`-device intel-hda`), else playback dies with "Element not found" (0x80070490) before decode.

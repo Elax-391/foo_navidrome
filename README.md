@@ -13,6 +13,7 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 
 - Browse your entire music library: Artists → Albums → Songs
 - Add albums or artists to playlist in one click (loads all songs automatically)
+- Right-click any row for a **Play Now / Add to Playlist** context menu
 - Double-click a song to play immediately
 - Search across artists, albums and songs
 - Album artwork displayed in Now Playing and playlists (fetched from Navidrome)
@@ -208,6 +209,20 @@ Linux host. A *native* Windows build uses Visual Studio directly and needs no sc
 | `./scripts/dev-build.sh --no-install` | Build only (skip install) |
 | `./scripts/dev-build.sh --new-release` | Build, install, package, then create a GitHub release |
 | `./scripts/install-macos.sh` | Install an already-built component + package the `.fb2k-component` (called by `dev-build.sh`) |
+
+### macOS — build & test the *Windows* component in a Win11 ARM VM
+
+No Windows machine needed: cross-compile the Windows x64 DLL on the Mac
+(`clang-cl` + `lld-link` + `xwin`) and runtime-test it in a headless Windows 11
+ARM64 QEMU/HVF guest. See [`scripts/win-vm/README.md`](scripts/win-vm/README.md)
+for the full walkthrough.
+
+| Command | What it does |
+|---------|--------------|
+| `./scripts/win-vm/setup-mac-toolchain.sh` | One-time: Homebrew deps + xwin CRT/SDK/ATL + WTL + foobar SDK |
+| `./scripts/win-vm/fetch-win11-arm.sh` | Build the Win11 ARM ISO (uupdump) + fetch the virtio ISO |
+| `./scripts/win-vm/win-vm.sh install` | Unattended headless Windows install into the QEMU guest |
+| `./scripts/win-vm/win-vm-test.sh --launch` | Cross-build the x64 DLL → deploy into the guest over SSH → relaunch foobar2000 |
 
 ### CI (GitHub Actions — not run by hand)
 
