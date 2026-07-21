@@ -20,8 +20,23 @@ concurrency:
 jobs:
   release:
     runs-on: macos-14
-    # Skip the release commit semantic-release itself pushes (avoids loops).
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    # Skip the release commit semantic-release itself pushes (avoids loops), and
+    # skip commit types that .releaserc.json's commit-analyzer already treats as
+    # "no release" (chore/docs/style/test/ci) — no point burning a full macOS
+    # xcodebuild just to have semantic-release no-op at the end. Only checks the
+    # top commit of the push (head_commit), same limitation as the skip-ci guard.
+    if: >-
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !startsWith(github.event.head_commit.message, 'chore:') &&
+      !startsWith(github.event.head_commit.message, 'chore(') &&
+      !startsWith(github.event.head_commit.message, 'docs:') &&
+      !startsWith(github.event.head_commit.message, 'docs(') &&
+      !startsWith(github.event.head_commit.message, 'style:') &&
+      !startsWith(github.event.head_commit.message, 'style(') &&
+      !startsWith(github.event.head_commit.message, 'test:') &&
+      !startsWith(github.event.head_commit.message, 'test(') &&
+      !startsWith(github.event.head_commit.message, 'ci:') &&
+      !startsWith(github.event.head_commit.message, 'ci(')
 
     # Expose the version semantic-release resolved (written to $GITHUB_OUTPUT by
     # ci-build.sh's prepareCmd) so the Windows job can attach its x64 component
@@ -210,3 +225,69 @@ jobs:
             "${ASSET}#foo_navidrome ${VERSION} (macOS + Windows x86/x64/ARM64)" \
             --clobber --repo "$GITHUB_REPOSITORY"
           echo "uploaded multi-platform $ASSET to release v${VERSION}"
+
+  # --------------------------------------------------------------------------
+  # Notify the n8n workflow that publishes this release to the foobar2000.org
+  # components admin panel (componentsadmin?action=add-release&component_id=331).
+  # n8n holds the foobar2000.org login + does the actual upload; this step only
+  # ships it the public release metadata (no credentials involved here).
+  #
+  # The webhook sits behind a Cloudflare Tunnel + Access Service Token (see
+  # infra-foundations terraform/cloudflare/access-n8n-webhook.tf) - CF validates
+  # the CF-Access-Client-* headers at the edge before the request ever reaches
+  # n8n, and n8n's own Webhook node checks X-Webhook-Secret as a second,
+  # independent layer.
+  # --------------------------------------------------------------------------
+  notify-n8n:
+    needs: [release, merge-component]
+    if: needs.release.outputs.released_version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify n8n for foobar2000.org publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.released_version }}
+          N8N_WEBHOOK_URL: ${{ secrets.N8N_FOOBAR_RELEASE_WEBHOOK_URL }}
+          N8N_WEBHOOK_SECRET: ${{ secrets.N8N_FOOBAR_RELEASE_WEBHOOK_SECRET }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          ASSET="foo_navidrome_${VERSION}.fb2k-component"
+
+          ASSET_URL=$(gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq ".assets[] | select(.name==\"$ASSET\") | .url")
+          CHANGELOG=$(gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+
+          # foobar2000.org's changelog field only supports plain "* item" bullet
+          # lines (see /componentsadmin/help-changelog: "does not and will not
+          # support any advanced formatting") - semantic-release's markdown
+          # (## [version](compare-url) header, ### section headers, per-item
+          # ([hash](commit-url)) links) renders as ugly literal text there.
+          # Strip it down to section labels + bare bullets.
+          CHANGELOG_CLEAN=$(printf '%s' "$CHANGELOG" | perl -0pe '
+            s/^## \[.*?\].*\n//m;
+            s/^### /\n/mg;
+            s/\s*\(\[[0-9a-f]{7,40}\]\([^\)]+\)\)//g;
+            s/\n{3,}/\n\n/g;
+            s/^\n+//;
+            s/\n+$/\n/;
+          ')
+
+          if [ -z "$ASSET_URL" ]; then
+            echo "ERROR: could not resolve download url for $ASSET" >&2
+            exit 1
+          fi
+
+          curl -sf -X POST "$N8N_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Webhook-Secret: ${N8N_WEBHOOK_SECRET}" \
+            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+            -d "$(jq -n \
+                  --arg version "$VERSION" \
+                  --arg changelog "$CHANGELOG_CLEAN" \
+                  --arg asset_url "$ASSET_URL" \
+                  --arg asset_name "$ASSET" \
+                  '{version:$version, changelog:$changelog, asset_url:$asset_url, asset_name:$asset_name}')"
+          echo "notified n8n to publish $ASSET (v${VERSION}) to foobar2000.org"
