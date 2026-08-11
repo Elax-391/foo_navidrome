@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "BrowserWindow.h"
+#include "Localization.h"
 #include "SubsonicClientWin.h"
 #include "NavidromeInputWin.h"
 #include <SDK/playlist.h>
@@ -37,7 +38,7 @@ BrowserWindow& BrowserWindow::get() {
 
 void BrowserWindow::show() {
     if (!IsWindow()) {
-        Create(nullptr, CWindow::rcDefault, L"Navidrome Browser",
+        Create(nullptr, CWindow::rcDefault, navidrome::l10n::browserTitle,
                WS_OVERLAPPEDWINDOW, 0);
         SetWindowPos(nullptr, 0, 0, 580, 660,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW);
@@ -68,7 +69,7 @@ LRESULT BrowserWindow::OnCreate(LPCREATESTRUCT) {
     m_search.Create(*this, CWindow::rcDefault, nullptr,
         WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, IDC_SEARCH);
     m_search.SetFont(hFont);
-    m_search.SetCueBannerText(L"Search artists, albums, songs\u2026");
+    m_search.SetCueBannerText(navidrome::l10n::searchCue);
 
     // Tree view
     m_tree.Create(*this, CWindow::rcDefault, nullptr,
@@ -78,15 +79,15 @@ LRESULT BrowserWindow::OnCreate(LPCREATESTRUCT) {
     m_tree.SetFont(hFont);
 
     // Buttons
-    m_addBtn.Create(*this, CWindow::rcDefault, L"Add to Playlist",
+    m_addBtn.Create(*this, CWindow::rcDefault, navidrome::l10n::addToPlaylist,
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_ADD);
     m_addBtn.SetFont(hFont);
 
-    m_playBtn.Create(*this, CWindow::rcDefault, L"Play Now",
+    m_playBtn.Create(*this, CWindow::rcDefault, navidrome::l10n::playNow,
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_PLAY);
     m_playBtn.SetFont(hFont);
 
-    m_refreshBtn.Create(*this, CWindow::rcDefault, L"Refresh",
+    m_refreshBtn.Create(*this, CWindow::rcDefault, navidrome::l10n::refresh,
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_REFRESH);
     m_refreshBtn.SetFont(hFont);
 
@@ -103,28 +104,48 @@ void BrowserWindow::OnDestroy() {
     m_rootNodes.clear();
 }
 
+void BrowserWindow::OnGetMinMaxInfo(LPMINMAXINFO info) {
+    if (m_embedded) return;
+    if (info->ptMinTrackSize.x < 400) info->ptMinTrackSize.x = 400;
+    if (info->ptMinTrackSize.y < 260) info->ptMinTrackSize.y = 260;
+}
+
 LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
-    const int pad = 6, btnH = 26, searchH = 22, statusW = 200;
-    int w = sz.cx, h = sz.cy;
+    const int pad = 6, btnH = 26, searchH = 22;
+    const int w = sz.cx > 0 ? sz.cx : 0;
+    const int h = sz.cy > 0 ? sz.cy : 0;
+    const int contentW = w > 2 * pad ? w - 2 * pad : 0;
+    const int treeH = h > searchH + btnH + 4 * pad
+        ? h - searchH - btnH - 4 * pad
+        : 0;
 
     m_search.SetWindowPos(nullptr,
-        pad, pad, w - 2*pad, searchH,
+        pad, pad, contentW, searchH,
         SWP_NOZORDER);
     m_tree.SetWindowPos(nullptr,
         pad, pad + searchH + pad,
-        w - 2*pad, h - searchH - btnH - 4*pad,
+        contentW, treeH,
         SWP_NOZORDER);
 
-    int btnY = h - pad - btnH;
-    int btnW = 110;
-    m_refreshBtn.SetWindowPos(nullptr, pad, btnY, 80, btnH, SWP_NOZORDER);
+    const int btnY = h > pad + btnH ? h - pad - btnH : 0;
+    const int desiredRefreshW = 56, desiredAddW = 168, desiredPlayW = 96;
+    const int desiredButtonsW = desiredRefreshW + desiredAddW + desiredPlayW;
+    const int availableRowW = w > 5 * pad ? w - 5 * pad : 0;
+    const bool compact = availableRowW < desiredButtonsW;
+    const int refreshW = compact ? availableRowW * desiredRefreshW / desiredButtonsW
+                                 : desiredRefreshW;
+    const int addW = compact ? availableRowW * desiredAddW / desiredButtonsW
+                             : desiredAddW;
+    const int playW = compact ? availableRowW - refreshW - addW
+                              : desiredPlayW;
+    m_refreshBtn.SetWindowPos(nullptr, pad, btnY, refreshW, btnH, SWP_NOZORDER);
+    const int statusX = pad + refreshW + pad;
+    const int statusW = compact ? 0 : availableRowW - desiredButtonsW;
     m_status.SetWindowPos(nullptr,
-        pad + 80 + pad, btnY + 4,
-        w - 80 - 2*btnW - 4*pad, btnH, SWP_NOZORDER);
-    m_playBtn.SetWindowPos(nullptr,
-        w - pad - btnW, btnY, btnW, btnH, SWP_NOZORDER);
-    m_addBtn.SetWindowPos(nullptr,
-        w - pad - 2*btnW - pad, btnY, btnW, btnH, SWP_NOZORDER);
+        statusX, btnY + 4, statusW, btnH, SWP_NOZORDER);
+    const int addX = statusX + statusW + pad;
+    m_addBtn.SetWindowPos(nullptr, addX, btnY, addW, btnH, SWP_NOZORDER);
+    m_playBtn.SetWindowPos(nullptr, addX + addW + pad, btnY, playW, btnH, SWP_NOZORDER);
     return 0;
 }
 
@@ -132,7 +153,7 @@ LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
 // Loading
 // ---------------------------------------------------------------------------
 void BrowserWindow::loadArtists() {
-    setStatus("Loading artists\u2026");
+    setStatus(navidrome::l10n::loadingArtists);
     m_tree.DeleteAllItems();
     m_nodeMap.clear();
     m_rootNodes.clear();
@@ -170,12 +191,12 @@ LRESULT BrowserWindow::OnNavidromeChildren(UINT, WPARAM wParam, LPARAM, BOOL&) {
 
 void BrowserWindow::populateRoot(LoadedPayload* payload) {
     if (!payload->error.empty()) {
-        setStatus("Error: " + payload->error); return;
+        setStatus(navidrome::l10n::error(payload->error)); return;
     }
     m_rootNodes = payload->nodes;
     for (auto& n : m_rootNodes)
         insertNode(TVI_ROOT, n);
-    setStatus(std::to_string(m_rootNodes.size()) + " artists");
+    setStatus(navidrome::l10n::artistCount(m_rootNodes.size()));
 }
 
 void BrowserWindow::populateChildren(LoadedPayload* payload) {
@@ -201,7 +222,7 @@ void BrowserWindow::populateChildren(LoadedPayload* payload) {
     if (!payload->error.empty()) {
         auto errNode = std::make_shared<NavidromeNode>();
         errNode->type        = NavidromeNode::Error;
-        errNode->displayName = "Error: " + payload->error;
+        errNode->displayName = navidrome::l10n::error(payload->error);
         parent->children     = { errNode };
     }
 
@@ -262,7 +283,7 @@ LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
     // Insert placeholder
     auto loadNode = std::make_shared<NavidromeNode>();
     loadNode->type        = NavidromeNode::Loading;
-    loadNode->displayName = "Loading\u2026";
+    loadNode->displayName = navidrome::l10n::loading;
     insertNode(node->hItem, loadNode);
 
     std::thread([this, node]() {
@@ -345,9 +366,9 @@ std::vector<std::shared_ptr<NavidromeNode>> BrowserWindow::selectedNodes() {
 // used by the Enter shortcut so "select artist + Enter" queues and dismisses.
 void BrowserWindow::queueSelected(bool play, bool closeAfter) {
     auto selected = selectedNodes();
-    if (selected.empty()) { setStatus("Select at least one item"); return; }
+    if (selected.empty()) { setStatus(navidrome::l10n::selectAtLeastOne); return; }
 
-    setStatus("Loading tracks\u2026");
+    setStatus(navidrome::l10n::loadingTracks);
     std::thread([this, selected, play, closeAfter]() {
         std::vector<std::shared_ptr<NavidromeNode>> songs;
         for (auto& n : selected)
@@ -396,8 +417,8 @@ void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
 
     CMenu menu;
     menu.CreatePopupMenu();
-    menu.AppendMenu(MF_STRING, IDC_PLAY, L"Play Now");
-    menu.AppendMenu(MF_STRING, IDC_ADD,  L"Add to Playlist");
+    menu.AppendMenu(MF_STRING, IDC_PLAY, navidrome::l10n::playNow);
+    menu.AppendMenu(MF_STRING, IDC_ADD, navidrome::l10n::addToPlaylist);
     menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, *this);
 }
 
@@ -414,7 +435,7 @@ void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
         if (m_rootNodes.empty()) loadArtists();
         return;
     }
-    setStatus("Searching\u2026");
+    setStatus(navidrome::l10n::searching);
     std::thread([this, query]() {
         std::string err;
         auto results = navidrome::SubsonicClientWin::get().search(query, err);
@@ -487,7 +508,7 @@ void BrowserWindow::collectSongsDeep(std::shared_ptr<NavidromeNode> node,
 // ---------------------------------------------------------------------------
 void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> songs,
                                  bool play) {
-    if (songs.empty()) { setStatus("No songs selected"); return; }
+    if (songs.empty()) { setStatus(navidrome::l10n::noSongsSelected); return; }
 
     metadb_handle_list tracks;
     auto hints = metadb_io_v2::get()->create_hint_list();
@@ -540,8 +561,7 @@ void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> son
         playback_control::get()->start(playback_control::track_command_play);
     }
 
-    std::string msg = "Added " + std::to_string(tracks.get_count()) + " tracks";
-    setStatus(msg);
+    setStatus(navidrome::l10n::addedTracks(tracks.get_count()));
 }
 
 void BrowserWindow::setStatus(const std::string& msg) {

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "SubsonicClientWin.h"
+#include "Localization.h"
 #include <SDK/cfg_var.h>
 
 #pragma comment(lib, "winhttp.lib")
@@ -173,13 +174,14 @@ static std::string checkResponse(const std::string& body, std::string& outError)
     auto res = jstr(body, "status");
     if (res != "ok") {
         auto arr = jarr(body, "error");
-        outError = arr.empty() ? "Unknown Subsonic error" : jstr(arr[0], "message", "Error");
+        outError = arr.empty() ? navidrome::l10n::unknownSubsonicError
+                               : jstr(arr[0], "message", navidrome::l10n::failedUtf8);
         return "";
     }
     // Return everything inside "subsonic-response":{...}
     std::string k = "\"subsonic-response\":{";
     auto p = body.find(k);
-    if (p == std::string::npos) { outError = "Invalid response"; return ""; }
+    if (p == std::string::npos) { outError = navidrome::l10n::invalidResponse; return ""; }
     p += k.size() - 1;
     size_t st = p; int depth = 0;
     for (; p < body.size(); ++p) {
@@ -247,18 +249,18 @@ std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
     uc.lpszUrlPath     = path; uc.dwUrlPathLength     = 4096;
 
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
-        outError = "Invalid URL"; return "";
+        outError = navidrome::l10n::invalidUrl; return "";
     }
 
     HINTERNET hSess = WinHttpOpen(L"foo_navidrome/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSess) { outError = "WinHttpOpen failed"; return ""; }
+    if (!hSess) { outError = navidrome::l10n::winHttpOpenFailed; return ""; }
     WinHttpSetTimeouts(hSess, 0, 15000, 15000, 30000);
     applySecureProtocols(hSess);
 
     HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
-    if (!hConn) { WinHttpCloseHandle(hSess); outError = "Connect failed"; return ""; }
+    if (!hConn) { WinHttpCloseHandle(hSess); outError = navidrome::l10n::connectFailed; return ""; }
 
     DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
     HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path,
@@ -285,10 +287,10 @@ std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
                     result.append(chunk, 0, read);
                 }
             } else {
-                outError = "HTTP " + std::to_string(status);
+                outError = navidrome::l10n::httpError(status);
             }
         } else {
-            outError = "Request failed (err=" + std::to_string(GetLastError()) + ")";
+            outError = navidrome::l10n::requestError(GetLastError());
         }
         WinHttpCloseHandle(hReq);
     }
@@ -315,7 +317,7 @@ std::vector<navidrome::Artist> navidrome::SubsonicClientWin::getArtists(std::str
         for (auto& a : jarr(idxObj, "artist")) {
             Artist ar;
             ar.id         = jstr(a, "id");
-            ar.name       = jstr(a, "name", "Unknown Artist");
+            ar.name       = jstr(a, "name", navidrome::l10n::unknownArtist);
             ar.coverArtId = jstr(a, "coverArt");
             ar.albumCount = jint(a, "albumCount");
             result.push_back(std::move(ar));
@@ -336,7 +338,7 @@ navidrome::SubsonicClientWin::getAlbumsForArtist(const std::string& artistId,
     for (auto& a : jarr(root, "album")) {
         Album al;
         al.id         = jstr(a, "id");
-        al.name       = jstr(a, "name", "Unknown Album");
+        al.name       = jstr(a, "name", navidrome::l10n::unknownAlbum);
         al.artist     = jstr(a, "artist");
         al.artistId   = jstr(a, "artistId", artistId);
         al.coverArtId = jstr(a, "coverArt");
@@ -359,7 +361,7 @@ navidrome::SubsonicClientWin::getSongsForAlbum(const std::string& albumId,
     for (auto& s : jarr(root, "song")) {
         Song so;
         so.id         = jstr(s, "id");
-        so.title      = jstr(s, "title", "Unknown Title");
+        so.title      = jstr(s, "title", navidrome::l10n::unknownTitle);
         so.artist     = jstr(s, "artist");
         so.artistId   = jstr(s, "artistId");
         so.album      = jstr(s, "album");

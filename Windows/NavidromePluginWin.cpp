@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "BrowserWindow.h"
+#include "Localization.h"
 #include "SubsonicClientWin.h"
 #include <SDK/cfg_var.h>
 #include <SDK/album_art.h>
@@ -66,7 +67,7 @@ public:
 
     void show() {
         if (!IsWindow()) {
-            Create(nullptr, CWindow::rcDefault, L"Navidrome — Custom HTTP Headers",
+            Create(nullptr, CWindow::rcDefault, navidrome::l10n::headersWindowTitle,
                    WS_OVERLAPPEDWINDOW, 0);
             SetWindowPos(nullptr, 0, 0, 520, 360,
                          SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW);
@@ -80,6 +81,7 @@ public:
     BEGIN_MSG_MAP(NavidromeHeadersWindow)
         MSG_WM_CREATE(OnCreate)
         MSG_WM_SIZE(OnSize)
+        MSG_WM_GETMINMAXINFO(OnGetMinMaxInfo)
         COMMAND_ID_HANDLER_EX(IDC_CF,     OnCloudflare)
         COMMAND_ID_HANDLER_EX(IDC_SAVE,   OnSave)
         COMMAND_ID_HANDLER_EX(IDC_CANCEL, OnCancel)
@@ -94,7 +96,7 @@ private:
         auto setFont = [&](HWND h) { SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0); };
 
         HWND hint = CreateWindowW(L"STATIC",
-            L"One header per line, as  Name: Value  (e.g. for a Cloudflare Zero Trust tunnel).",
+            navidrome::l10n::headersHint,
             WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, *this,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HINT)), nullptr, nullptr);
         setFont(hint);
@@ -110,23 +112,41 @@ private:
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
             setFont(b);
         };
-        mkBtn(IDC_CF,     L"Cloudflare headers");
-        mkBtn(IDC_SAVE,   L"Save");
-        mkBtn(IDC_CANCEL, L"Cancel");
+        mkBtn(IDC_CF,     navidrome::l10n::cloudflareHeaders);
+        mkBtn(IDC_SAVE,   navidrome::l10n::save);
+        mkBtn(IDC_CANCEL, navidrome::l10n::cancel);
         return 0;
     }
 
+    void OnGetMinMaxInfo(LPMINMAXINFO info) {
+        if (info->ptMinTrackSize.x < 440) info->ptMinTrackSize.x = 440;
+        if (info->ptMinTrackSize.y < 260) info->ptMinTrackSize.y = 260;
+    }
+
     LRESULT OnSize(UINT, CSize sz) {
-        const int pad = 10, btnH = 26, btnW = 130, hintH = 18;
-        int w = sz.cx, h = sz.cy;
-        ::SetWindowPos(GetDlgItem(IDC_HINT), nullptr, pad, pad, w - 2 * pad, hintH,
+        const int pad = 10, btnH = 26, desiredCfBtnW = 190,
+                  desiredActionBtnW = 80, hintH = 44;
+        const int w = sz.cx > 0 ? sz.cx : 0;
+        const int h = sz.cy > 0 ? sz.cy : 0;
+        const int contentW = w > 2 * pad ? w - 2 * pad : 0;
+        const int editH = h > hintH + btnH + 3 * pad + 4
+            ? h - hintH - btnH - 3 * pad - 4
+            : 0;
+        ::SetWindowPos(GetDlgItem(IDC_HINT), nullptr, pad, pad, contentW, hintH,
                        SWP_NOZORDER);
-        m_edit.SetWindowPos(nullptr, pad, pad + hintH + 4, w - 2 * pad,
-                            h - hintH - btnH - 3 * pad - 4, SWP_NOZORDER);
-        int by = h - btnH - pad;
-        ::SetWindowPos(GetDlgItem(IDC_CF),     nullptr, pad, by, btnW, btnH, SWP_NOZORDER);
-        ::SetWindowPos(GetDlgItem(IDC_CANCEL), nullptr, w - pad - 80, by, 80, btnH, SWP_NOZORDER);
-        ::SetWindowPos(GetDlgItem(IDC_SAVE),   nullptr, w - 2 * pad - 80 - 80, by, 80, btnH, SWP_NOZORDER);
+        m_edit.SetWindowPos(nullptr, pad, pad + hintH + 4, contentW,
+                            editH, SWP_NOZORDER);
+        const int by = h > btnH + pad ? h - btnH - pad : 0;
+        const int desiredButtonsW = desiredCfBtnW + 2 * desiredActionBtnW;
+        const int availableButtonsW = w > 4 * pad ? w - 4 * pad : 0;
+        const bool compact = availableButtonsW < desiredButtonsW;
+        const int cfBtnW = compact ? availableButtonsW * desiredCfBtnW / desiredButtonsW
+                                   : desiredCfBtnW;
+        const int actionBtnW = compact ? (availableButtonsW - cfBtnW) / 2
+                                       : desiredActionBtnW;
+        ::SetWindowPos(GetDlgItem(IDC_CF),     nullptr, pad, by, cfBtnW, btnH, SWP_NOZORDER);
+        ::SetWindowPos(GetDlgItem(IDC_CANCEL), nullptr, w - pad - actionBtnW, by, actionBtnW, btnH, SWP_NOZORDER);
+        ::SetWindowPos(GetDlgItem(IDC_SAVE),   nullptr, w - 2 * pad - actionBtnW * 2, by, actionBtnW, btnH, SWP_NOZORDER);
         return 0;
     }
 
@@ -224,21 +244,22 @@ private:
             HWND h2 = CreateWindowW(L"EDIT", L"", sty, x,y,w,h, *this, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
             SendMessageW(h2, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
         };
-        lbl(L"Server URL:",  8, 14, 80, 18);  edit(IDC_URL,  92, 10, 290, 22);
-        lbl(L"Username:",    8, 44, 80, 18);  edit(IDC_USER, 92, 40, 290, 22);
-        lbl(L"Password:",    8, 74, 80, 18);  edit(IDC_PASS, 92, 70, 290, 22, true);
+        constexpr int labelW = 100, editX = 112, editW = 270;
+        lbl(navidrome::l10n::serverUrl, 8, 14, labelW, 18); edit(IDC_URL, editX, 10, editW, 22);
+        lbl(navidrome::l10n::username, 8, 44, labelW, 18); edit(IDC_USER, editX, 40, editW, 22);
+        lbl(navidrome::l10n::password, 8, 74, labelW, 18); edit(IDC_PASS, editX, 70, editW, 22, true);
 
-        HWND btn = CreateWindowW(L"BUTTON", L"Test Connection",
-            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON, 92,100, 110,24, *this,
+        HWND btn = CreateWindowW(L"BUTTON", navidrome::l10n::testConnection,
+            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON, editX,100, 120,24, *this,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_TEST)), nullptr, nullptr);
         SendMessageW(btn, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
 
-        HWND st = CreateWindowW(L"STATIC", L"", WS_CHILD|WS_VISIBLE|SS_LEFT, 210,105, 170,18, *this,
+        HWND st = CreateWindowW(L"STATIC", L"", WS_CHILD|WS_VISIBLE|SS_LEFT, editX,130, editW,18, *this,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUS)), nullptr, nullptr);
         SendMessageW(st, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
 
-        HWND hdr = CreateWindowW(L"BUTTON", L"Custom Headers…",
-            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON, 92,134, 130,24, *this,
+        HWND hdr = CreateWindowW(L"BUTTON", navidrome::l10n::customHeaders,
+            WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON, editX,156, 140,24, *this,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HEADERS)), nullptr, nullptr);
         SendMessageW(hdr, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
 
@@ -270,7 +291,7 @@ private:
 
     void OnTest(UINT, int, HWND) {
         saveSettings();
-        SetDlgItemText(IDC_STATUS, L"Testing\u2026");
+        SetDlgItemText(IDC_STATUS, navidrome::l10n::testing);
         std::thread([this]() {
             std::string err;
             bool ok = navidrome::SubsonicClientWin::get().ping(err);
@@ -284,8 +305,11 @@ private:
     LRESULT OnTestResult(UINT, WPARAM wParam, LPARAM lParam) {
         bool ok = wParam != 0;
         auto* errStr = reinterpret_cast<std::string*>(lParam);
-        SetDlgItemText(IDC_STATUS, ok ? L"Connected!" :
-            pfc::stringcvt::string_wide_from_utf8(errStr ? errStr->c_str() : "Failed"));
+        const char* errorText = errStr && !errStr->empty()
+            ? errStr->c_str()
+            : navidrome::l10n::failedUtf8;
+        SetDlgItemText(IDC_STATUS, ok ? navidrome::l10n::connected :
+            pfc::stringcvt::string_wide_from_utf8(errorText));
         delete errStr;
         return 0;
     }
@@ -380,11 +404,11 @@ public:
         throw pfc::exception_invalid_params();
     }
     void get_name(t_uint32 i, pfc::string_base& out) override {
-        if (i == 0) { out = "Open Navidrome Browser"; return; }
+        if (i == 0) { out = navidrome::l10n::menuOpenBrowser; return; }
         throw pfc::exception_invalid_params();
     }
     bool get_description(t_uint32 i, pfc::string_base& out) override {
-        if (i == 0) { out = "Browse and stream from Navidrome"; return true; }
+        if (i == 0) { out = navidrome::l10n::menuBrowseDescription; return true; }
         return false;
     }
     GUID     get_parent() override { return mainmenu_groups::file; }

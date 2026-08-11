@@ -54,6 +54,7 @@ public:
         MSG_WM_CREATE(OnCreate)
         MSG_WM_DESTROY(OnDestroy)
         MSG_WM_SIZE(OnSize)
+        MSG_WM_GETMINMAXINFO(OnGetMinMaxInfo)
         MESSAGE_HANDLER(WM_NAVIDROME_LOADED,   OnNavidromeLoaded)
         MESSAGE_HANDLER(WM_NAVIDROME_CHILDREN, OnNavidromeChildren)
         NOTIFY_CODE_HANDLER_EX(TVN_ITEMEXPANDING, OnTreeExpanding)
@@ -79,6 +80,7 @@ private:
     LRESULT OnCreate(LPCREATESTRUCT);
     void    OnDestroy();
     LRESULT OnSize(UINT, CSize);
+    void    OnGetMinMaxInfo(LPMINMAXINFO);
     LRESULT OnNavidromeLoaded(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnNavidromeChildren(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnTreeExpanding(LPNMHDR);

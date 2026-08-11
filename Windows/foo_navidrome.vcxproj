@@ -90,6 +90,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalIncludeDirectories>
         .;
         ..;
@@ -160,6 +161,7 @@
     <ClInclude Include="SubsonicClientWin.h" />
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />
+    <ClInclude Include="Localization.h" />
   </ItemGroup>
 
   <!-- SDK project references (adjust paths if your SDK layout differs) -->
