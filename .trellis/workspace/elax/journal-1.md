@@ -27,3 +27,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Windows full-library playlist import
+
+**Date**: 2026-08-11
+**Task**: Windows full-library playlist import
+**Branch**: `main`
+
+### Summary
+
+Added a Windows 添加全部 command that imports the complete Navidrome library through a shared cancellable background queue with progress, partial-failure reporting, safe window lifetime dispatch, preserved search/expand state, and verified x64 DLL/component artifacts.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ae5352` | (see git log) |
+
+### Status
+
+[OK] **Completed**
