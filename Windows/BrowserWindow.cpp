@@ -8,7 +8,29 @@
 #include <SDK/playable_location.h>
 #include <SDK/playback_control.h>
 #include <commctrl.h>
+#include <utility>
 #pragma comment(lib, "comctl32.lib")
+
+namespace {
+
+template<typename Payload>
+void dispatchBrowserPayload(const std::shared_ptr<BrowserDispatchState>& dispatch,
+                            UINT message, Payload* payload) {
+    fb2k::inMainThread([dispatch, message, payload]() {
+        if (!dispatch || !dispatch->alive || !::IsWindow(dispatch->hwnd)) {
+            delete payload;
+            return;
+        }
+        ::SendMessage(dispatch->hwnd, message,
+                      reinterpret_cast<WPARAM>(payload), 0);
+    });
+}
+
+bool cancellationRequested(const std::shared_ptr<std::atomic_bool>& cancel) {
+    return cancel && cancel->load();
+}
+
+} // namespace
 
 static std::wstring u8ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -83,6 +105,10 @@ LRESULT BrowserWindow::OnCreate(LPCREATESTRUCT) {
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_ADD);
     m_addBtn.SetFont(hFont);
 
+    m_addAllBtn.Create(*this, CWindow::rcDefault, navidrome::l10n::addAllToPlaylist,
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_ADD_ALL);
+    m_addAllBtn.SetFont(hFont);
+
     m_playBtn.Create(*this, CWindow::rcDefault, navidrome::l10n::playNow,
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_PLAY);
     m_playBtn.SetFont(hFont);
@@ -96,12 +122,32 @@ LRESULT BrowserWindow::OnCreate(LPCREATESTRUCT) {
         WS_CHILD | WS_VISIBLE | SS_LEFT, 0, IDC_STATUS);
     m_status.SetFont(hFont);
 
+    m_dispatchState = std::make_shared<BrowserDispatchState>();
+    m_dispatchState->hwnd = *this;
+    m_dispatchState->alive = true;
+    updateActionState();
+
     return 0;
 }
 
 void BrowserWindow::OnDestroy() {
+    if (m_queueCancel) m_queueCancel->store(true);
+    ++m_queueOperationId;
+    ++m_libraryRequestId;
+    ++m_searchRequestId;
+    ++m_displayGeneration;
+    m_queueInProgress = false;
+    m_libraryLoading = false;
+    if (m_dispatchState) {
+        m_dispatchState->alive = false;
+        m_dispatchState->hwnd = nullptr;
+    }
+    m_queueCancel.reset();
+    m_dispatchState.reset();
     m_nodeMap.clear();
     m_rootNodes.clear();
+    m_libraryRoots.clear();
+    m_deferredChildren.clear();
 }
 
 void BrowserWindow::OnGetMinMaxInfo(LPMINMAXINFO info) {
@@ -128,22 +174,31 @@ LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
         SWP_NOZORDER);
 
     const int btnY = h > pad + btnH ? h - pad - btnH : 0;
-    const int desiredRefreshW = 56, desiredAddW = 168, desiredPlayW = 96;
-    const int desiredButtonsW = desiredRefreshW + desiredAddW + desiredPlayW;
-    const int availableRowW = w > 5 * pad ? w - 5 * pad : 0;
+    const int desiredRefreshW = 56, desiredAddAllW = 88;
+    const int desiredAddW = 168, desiredPlayW = 96;
+    const int desiredButtonsW = desiredRefreshW + desiredAddAllW +
+        desiredAddW + desiredPlayW;
+    const int availableRowW = w > 6 * pad ? w - 6 * pad : 0;
     const bool compact = availableRowW < desiredButtonsW;
     const int refreshW = compact ? availableRowW * desiredRefreshW / desiredButtonsW
                                  : desiredRefreshW;
+    const int addAllW = compact ? availableRowW * desiredAddAllW / desiredButtonsW
+                                : desiredAddAllW;
     const int addW = compact ? availableRowW * desiredAddW / desiredButtonsW
                              : desiredAddW;
-    const int playW = compact ? availableRowW - refreshW - addW
-                              : desiredPlayW;
+    const int allocatedW = refreshW + addAllW + addW;
+    const int playW = compact ? (availableRowW > allocatedW
+                                    ? availableRowW - allocatedW : 0)
+                               : desiredPlayW;
     m_refreshBtn.SetWindowPos(nullptr, pad, btnY, refreshW, btnH, SWP_NOZORDER);
     const int statusX = pad + refreshW + pad;
-    const int statusW = compact ? 0 : availableRowW - desiredButtonsW;
+    const int statusW = compact ? 0 : (availableRowW > desiredButtonsW
+                                        ? availableRowW - desiredButtonsW : 0);
     m_status.SetWindowPos(nullptr,
         statusX, btnY + 4, statusW, btnH, SWP_NOZORDER);
-    const int addX = statusX + statusW + pad;
+    const int addAllX = statusX + statusW + pad;
+    m_addAllBtn.SetWindowPos(nullptr, addAllX, btnY, addAllW, btnH, SWP_NOZORDER);
+    const int addX = addAllX + addAllW + pad;
     m_addBtn.SetWindowPos(nullptr, addX, btnY, addW, btnH, SWP_NOZORDER);
     m_playBtn.SetWindowPos(nullptr, addX + addW + pad, btnY, playW, btnH, SWP_NOZORDER);
     return 0;
@@ -154,12 +209,17 @@ LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
 // ---------------------------------------------------------------------------
 void BrowserWindow::loadArtists() {
     setStatus(navidrome::l10n::loadingArtists);
-    m_tree.DeleteAllItems();
-    m_nodeMap.clear();
-    m_rootNodes.clear();
+    m_libraryLoading = true;
+    m_libraryRoots.clear();
+    displayRootNodes({});
+    updateActionState();
 
-    std::thread([this]() {
+    const std::uint64_t requestId = ++m_libraryRequestId;
+    auto dispatch = m_dispatchState;
+    std::thread([dispatch, requestId]() {
         auto* payload = new LoadedPayload{};
+        payload->source = LoadedPayload::Source::Library;
+        payload->requestId = requestId;
         std::string err;
         auto artists = navidrome::SubsonicClientWin::get().getArtists(err);
         payload->error = err;
@@ -171,32 +231,71 @@ void BrowserWindow::loadArtists() {
             n->coverArtId  = a.coverArtId;
             payload->nodes.push_back(n);
         }
-        PostMessage(WM_NAVIDROME_LOADED, reinterpret_cast<WPARAM>(payload), 0);
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_LOADED, payload);
     }).detach();
 }
 
 LRESULT BrowserWindow::OnNavidromeLoaded(UINT, WPARAM wParam, LPARAM, BOOL&) {
-    auto* payload = reinterpret_cast<LoadedPayload*>(wParam);
-    populateRoot(payload);
-    delete payload;
+    std::unique_ptr<LoadedPayload> payload(
+        reinterpret_cast<LoadedPayload*>(wParam));
+    const bool current = payload->source == LoadedPayload::Source::Library
+        ? payload->requestId == m_libraryRequestId
+        : payload->requestId == m_searchRequestId;
+    if (current) populateRoot(payload.get());
     return 0;
 }
 
 LRESULT BrowserWindow::OnNavidromeChildren(UINT, WPARAM wParam, LPARAM, BOOL&) {
-    auto* payload = reinterpret_cast<LoadedPayload*>(wParam);
-    populateChildren(payload);
-    delete payload;
+    std::unique_ptr<LoadedPayload> payload(
+        reinterpret_cast<LoadedPayload*>(wParam));
+    if (payload->displayGeneration != m_displayGeneration) {
+        if (payload->parent) payload->parent->isLoading = false;
+        return 0;
+    }
+    if (m_queueInProgress) {
+        m_deferredChildren.push_back(std::move(payload));
+        return 0;
+    }
+    populateChildren(payload.get());
     return 0;
 }
 
 void BrowserWindow::populateRoot(LoadedPayload* payload) {
+    const bool isLibrary = payload->source == LoadedPayload::Source::Library;
+    if (isLibrary) m_libraryLoading = false;
+
     if (!payload->error.empty()) {
-        setStatus(navidrome::l10n::error(payload->error)); return;
+        if (isLibrary) m_libraryRoots.clear();
+        updateActionState();
+        if (!m_queueInProgress)
+            setStatus(navidrome::l10n::error(payload->error));
+        return;
     }
-    m_rootNodes = payload->nodes;
-    for (auto& n : m_rootNodes)
-        insertNode(TVI_ROOT, n);
-    setStatus(navidrome::l10n::artistCount(m_rootNodes.size()));
+
+    if (isLibrary) {
+        m_libraryRoots = payload->nodes;
+        updateActionState();
+        if (m_searchQuery.size() < 2) {
+            displayRootNodes(m_libraryRoots);
+            if (!m_queueInProgress)
+                setStatus(navidrome::l10n::artistCount(m_libraryRoots.size()));
+        }
+        return;
+    }
+
+    displayRootNodes(payload->nodes);
+    if (!m_queueInProgress)
+        setStatus(navidrome::l10n::searchResultCount(payload->nodes.size()));
+}
+
+void BrowserWindow::displayRootNodes(
+        const std::vector<std::shared_ptr<NavidromeNode>>& nodes) {
+    ++m_displayGeneration;
+    m_tree.DeleteAllItems();
+    m_nodeMap.clear();
+    m_rootNodes = nodes;
+    for (auto& node : m_rootNodes)
+        insertNodeTree(TVI_ROOT, node);
 }
 
 void BrowserWindow::populateChildren(LoadedPayload* payload) {
@@ -204,16 +303,7 @@ void BrowserWindow::populateChildren(LoadedPayload* payload) {
     if (!parent) return;
 
     // Remove placeholder "Loading..." item
-    HTREEITEM hChild = m_tree.GetChildItem(parent->hItem);
-    while (hChild) {
-        HTREEITEM hNext = m_tree.GetNextSiblingItem(hChild);
-        auto it = m_nodeMap.find(hChild);
-        if (it != m_nodeMap.end() && it->second->type == NavidromeNode::Loading) {
-            m_tree.DeleteItem(hChild);
-            m_nodeMap.erase(it);
-        }
-        hChild = hNext;
-    }
+    removeLoadingChildren(parent);
 
     parent->isLoading      = false;
     parent->childrenLoaded = true;
@@ -240,6 +330,31 @@ void BrowserWindow::populateChildren(LoadedPayload* payload) {
     }
 }
 
+void BrowserWindow::applyDeferredChildren() {
+    for (auto& payload : m_deferredChildren) {
+        if (payload->displayGeneration == m_displayGeneration)
+            populateChildren(payload.get());
+        else if (payload->parent)
+            payload->parent->isLoading = false;
+    }
+    m_deferredChildren.clear();
+}
+
+void BrowserWindow::removeLoadingChildren(
+        const std::shared_ptr<NavidromeNode>& parent) {
+    if (!parent || !parent->hItem) return;
+    HTREEITEM hChild = m_tree.GetChildItem(parent->hItem);
+    while (hChild) {
+        HTREEITEM hNext = m_tree.GetNextSiblingItem(hChild);
+        auto it = m_nodeMap.find(hChild);
+        if (it != m_nodeMap.end() && it->second->type == NavidromeNode::Loading) {
+            m_tree.DeleteItem(hChild);
+            m_nodeMap.erase(it);
+        }
+        hChild = hNext;
+    }
+}
+
 HTREEITEM BrowserWindow::insertNode(HTREEITEM hParent,
                                     std::shared_ptr<NavidromeNode> node) {
     std::string label = node->displayName;
@@ -253,14 +368,25 @@ HTREEITEM BrowserWindow::insertNode(HTREEITEM hParent,
     auto wlabel           = u8ToWide(label);
     tvi.item.pszText      = const_cast<LPWSTR>(wlabel.c_str());
     tvi.item.lParam       = reinterpret_cast<LPARAM>(node.get());
-    // Show expand arrow for artists and albums
-    tvi.item.cChildren    = (node->type == NavidromeNode::Song   ||
-                              node->type == NavidromeNode::Error  ||
-                              node->type == NavidromeNode::Loading) ? 0 : 1;
+    // Show expand arrow for unloaded artists/albums or cached nodes with children.
+    const bool container = node->type == NavidromeNode::Artist ||
+                           node->type == NavidromeNode::Album;
+    tvi.item.cChildren = container &&
+        (!node->childrenLoaded || !node->children.empty()) ? 1 : 0;
 
     HTREEITEM hItem = m_tree.InsertItem(&tvi);
     node->hItem = hItem;
     m_nodeMap[hItem] = node;
+    return hItem;
+}
+
+HTREEITEM BrowserWindow::insertNodeTree(
+        HTREEITEM hParent, std::shared_ptr<NavidromeNode> node) {
+    HTREEITEM hItem = insertNode(hParent, node);
+    if (node->childrenLoaded) {
+        for (auto& child : node->children)
+            insertNodeTree(hItem, child);
+    }
     return hItem;
 }
 
@@ -273,6 +399,7 @@ std::shared_ptr<NavidromeNode> BrowserWindow::nodeForItem(HTREEITEM hItem) {
 // Tree events
 // ---------------------------------------------------------------------------
 LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
+    if (m_queueInProgress) return TRUE;
     auto* pnm = reinterpret_cast<LPNMTREEVIEW>(pnmh);
     if (pnm->action != TVE_EXPAND) return 0;
 
@@ -286,9 +413,12 @@ LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
     loadNode->displayName = navidrome::l10n::loading;
     insertNode(node->hItem, loadNode);
 
-    std::thread([this, node]() {
+    const std::uint64_t displayGeneration = m_displayGeneration;
+    auto dispatch = m_dispatchState;
+    std::thread([dispatch, node, displayGeneration]() {
         auto* payload  = new LoadedPayload{};
         payload->parent = node;
+        payload->displayGeneration = displayGeneration;
         std::string err;
 
         if (node->type == NavidromeNode::Artist) {
@@ -321,20 +451,20 @@ LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
             }
         }
         payload->error = err;
-        PostMessage(WM_NAVIDROME_CHILDREN,
-                    reinterpret_cast<WPARAM>(payload), 0);
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_CHILDREN, payload);
     }).detach();
 
     return 0;
 }
 
 LRESULT BrowserWindow::OnTreeDblClick(LPNMHDR) {
+    if (m_queueInProgress) return 0;
     HTREEITEM hSel = m_tree.GetSelectedItem();
     if (!hSel) return 0;
     auto node = nodeForItem(hSel);
     if (!node) return 0;
     if (node->type == NavidromeNode::Song)
-        enqueueNodes({ node }, true);
+        queueNodes({ node }, true, false, false);
     else if (m_tree.GetItemState(hSel, TVIS_EXPANDED) & TVIS_EXPANDED)
         m_tree.Expand(hSel, TVE_COLLAPSE);
     else
@@ -361,32 +491,133 @@ std::vector<std::shared_ptr<NavidromeNode>> BrowserWindow::selectedNodes() {
     return selected;
 }
 
-// Resolve the selected nodes to songs on a background thread, then enqueue on
-// the main thread. closeAfter hides the window once the tracks are queued \u2014
-// used by the Enter shortcut so "select artist + Enter" queues and dismisses.
 void BrowserWindow::queueSelected(bool play, bool closeAfter) {
     auto selected = selectedNodes();
     if (selected.empty()) { setStatus(navidrome::l10n::selectAtLeastOne); return; }
+    queueNodes(std::move(selected), play, closeAfter, false);
+}
 
-    setStatus(navidrome::l10n::loadingTracks);
-    std::thread([this, selected, play, closeAfter]() {
+// Resolve roots on a background thread, then enqueue once on the main thread.
+// The worker captures shared dispatch state rather than a BrowserWindow pointer.
+void BrowserWindow::queueNodes(
+        std::vector<std::shared_ptr<NavidromeNode>> roots,
+        bool play, bool closeAfter, bool reportRootProgress) {
+    if (m_queueInProgress) {
+        setStatus(navidrome::l10n::queueBusy);
+        return;
+    }
+    if (roots.empty()) {
+        setStatus(navidrome::l10n::noSongsSelected);
+        return;
+    }
+
+    m_queueInProgress = true;
+    const std::uint64_t operationId = ++m_queueOperationId;
+    m_queueCancel = std::make_shared<std::atomic_bool>(false);
+    auto cancel = m_queueCancel;
+    auto dispatch = m_dispatchState;
+    const std::size_t totalRoots = roots.size();
+
+    updateActionState();
+    setStatus(reportRootProgress
+        ? navidrome::l10n::importProgress(0, totalRoots, 0, 0)
+        : navidrome::l10n::loadingTracks);
+
+    std::thread([dispatch, cancel, operationId, roots = std::move(roots),
+                 totalRoots, play, closeAfter, reportRootProgress]() mutable {
         std::vector<std::shared_ptr<NavidromeNode>> songs;
-        for (auto& n : selected)
-            collectSongsDeep(n, songs);
-        fb2k::inMainThread([this, songs, play, closeAfter]() mutable {
-            enqueueNodes(std::move(songs), play);
-            if (closeAfter && !m_embedded && IsWindow()) ShowWindow(SW_HIDE);
-        });
+        std::size_t failedItems = 0;
+        std::size_t completedRoots = 0;
+
+        for (auto& root : roots) {
+            if (cancellationRequested(cancel)) break;
+            BrowserWindow::collectSongsDeep(root, songs, failedItems, cancel);
+            if (cancellationRequested(cancel)) break;
+            ++completedRoots;
+
+            if (reportRootProgress) {
+                auto* progress = new QueueProgressPayload{};
+                progress->operationId = operationId;
+                progress->completedRoots = completedRoots;
+                progress->totalRoots = totalRoots;
+                progress->songCount = songs.size();
+                progress->failedItems = failedItems;
+                dispatchBrowserPayload(dispatch, WM_NAVIDROME_QUEUE_PROGRESS,
+                                       progress);
+            }
+        }
+
+        auto* complete = new QueueCompletePayload{};
+        complete->operationId = operationId;
+        complete->songs = std::move(songs);
+        complete->failedItems = failedItems;
+        complete->cancelled = cancellationRequested(cancel);
+        complete->play = play;
+        complete->closeAfter = closeAfter;
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_QUEUE_COMPLETE, complete);
     }).detach();
 }
 
 void BrowserWindow::OnAdd(UINT, int, HWND)  { queueSelected(false, false); }
+void BrowserWindow::OnAddAll(UINT, int, HWND) {
+    if (m_libraryRoots.empty()) {
+        setStatus(navidrome::l10n::libraryNotLoaded);
+        return;
+    }
+    queueNodes(m_libraryRoots, false, false, true);
+}
 void BrowserWindow::OnPlay(UINT, int, HWND) { queueSelected(true,  false); }
+
+LRESULT BrowserWindow::OnQueueProgress(UINT, WPARAM wParam, LPARAM, BOOL&) {
+    std::unique_ptr<QueueProgressPayload> payload(
+        reinterpret_cast<QueueProgressPayload*>(wParam));
+    if (!m_queueInProgress || payload->operationId != m_queueOperationId)
+        return 0;
+    setStatus(navidrome::l10n::importProgress(
+        payload->completedRoots, payload->totalRoots,
+        payload->songCount, payload->failedItems));
+    return 0;
+}
+
+LRESULT BrowserWindow::OnQueueComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
+    std::unique_ptr<QueueCompletePayload> payload(
+        reinterpret_cast<QueueCompletePayload*>(wParam));
+    if (!m_queueInProgress || payload->operationId != m_queueOperationId)
+        return 0;
+
+    applyDeferredChildren();
+    m_queueInProgress = false;
+    m_queueCancel.reset();
+    updateActionState();
+    if (payload->cancelled) return 0;
+
+    if (payload->songs.empty()) {
+        setStatus(payload->failedItems > 0
+            ? navidrome::l10n::allItemsFailed(payload->failedItems)
+            : navidrome::l10n::noSongsFound);
+        return 0;
+    }
+
+    const std::size_t added = enqueueNodes(std::move(payload->songs), payload->play);
+    if (added == 0) {
+        setStatus(payload->failedItems > 0
+            ? navidrome::l10n::allItemsFailed(payload->failedItems)
+            : navidrome::l10n::noSongsFound);
+        return 0;
+    }
+    if (payload->failedItems > 0)
+        setStatus(navidrome::l10n::addedTracksWithFailures(
+            added, payload->failedItems));
+    if (added > 0 && payload->closeAfter && !m_embedded && IsWindow())
+        ShowWindow(SW_HIDE);
+    return 0;
+}
 
 // Enter in the tree = add the selected item(s) to the playlist, start playing
 // the first track, and close the window. A quick "queue this artist, play it,
 // and get out of my way" shortcut.
 LRESULT BrowserWindow::OnTreeReturn(LPNMHDR) {
+    if (m_queueInProgress) return 0;
     queueSelected(true, true);
     return 0;
 }
@@ -396,6 +627,7 @@ LRESULT BrowserWindow::OnTreeReturn(LPNMHDR) {
 // posts WM_COMMAND straight into the existing OnPlay / OnAdd handlers.
 void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
     if (wnd.m_hWnd != m_tree.m_hWnd) { SetMsgHandled(FALSE); return; }
+    if (m_queueInProgress) return;
 
     if (point.x == -1 && point.y == -1) {
         // Keyboard-invoked (Shift+F10 / menu key): anchor on the selected item.
@@ -423,23 +655,37 @@ void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
 }
 
 void BrowserWindow::OnRefresh(UINT, int, HWND) {
-    m_search.SetWindowText(L"");
+    if (m_queueInProgress) return;
+    m_searchQuery.clear();
+    ++m_searchRequestId;
     loadArtists();
+    m_search.SetWindowText(L"");
 }
 
 void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
+    if (m_queueInProgress) return;
     wchar_t buf[256] = {};
     m_search.GetWindowText(buf, 256);
     std::string query = wToU8(buf);
+    m_searchQuery = query;
+    const std::uint64_t requestId = ++m_searchRequestId;
     if (query.size() < 2) {
-        if (m_rootNodes.empty()) loadArtists();
+        if (!m_libraryRoots.empty()) {
+            displayRootNodes(m_libraryRoots);
+            setStatus(navidrome::l10n::artistCount(m_libraryRoots.size()));
+        } else if (!m_libraryLoading) {
+            loadArtists();
+        }
         return;
     }
     setStatus(navidrome::l10n::searching);
-    std::thread([this, query]() {
+    auto dispatch = m_dispatchState;
+    std::thread([dispatch, query, requestId]() {
         std::string err;
         auto results = navidrome::SubsonicClientWin::get().search(query, err);
         auto* payload = new LoadedPayload{};
+        payload->source = LoadedPayload::Source::Search;
+        payload->requestId = requestId;
         payload->error = err;
         for (auto& s : results.songs) {
             auto n = std::make_shared<NavidromeNode>();
@@ -455,25 +701,37 @@ void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
             n->childrenLoaded = true;
             payload->nodes.push_back(n);
         }
-        PostMessage(WM_NAVIDROME_LOADED, reinterpret_cast<WPARAM>(payload), 0);
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_LOADED, payload);
     }).detach();
 }
 
 // ---------------------------------------------------------------------------
 // Deep song collection (synchronous, call from background thread)
 // ---------------------------------------------------------------------------
-void BrowserWindow::collectSongsDeep(std::shared_ptr<NavidromeNode> node,
-                                     std::vector<std::shared_ptr<NavidromeNode>>& out) {
+void BrowserWindow::collectSongsDeep(
+        const std::shared_ptr<NavidromeNode>& node,
+        std::vector<std::shared_ptr<NavidromeNode>>& out,
+        std::size_t& failedItems,
+        const std::shared_ptr<std::atomic_bool>& cancel) {
+    if (cancellationRequested(cancel)) return;
     if (node->type == NavidromeNode::Song) { out.push_back(node); return; }
-    if (node->type == NavidromeNode::Loading || node->type == NavidromeNode::Error) return;
+    if (node->type == NavidromeNode::Error) { ++failedItems; return; }
+    if (node->type == NavidromeNode::Loading) return;
 
     if (node->type == NavidromeNode::Album) {
         if (node->childrenLoaded) {
-            for (auto& c : node->children) collectSongsDeep(c, out);
+            for (auto& child : node->children) {
+                if (cancellationRequested(cancel)) return;
+                collectSongsDeep(child, out, failedItems, cancel);
+            }
         } else {
             std::string err;
-            for (auto& s : navidrome::SubsonicClientWin::get()
-                               .getSongsForAlbum(node->id, err)) {
+            auto fetched = navidrome::SubsonicClientWin::get()
+                .getSongsForAlbum(node->id, err);
+            if (cancellationRequested(cancel)) return;
+            if (!err.empty()) ++failedItems;
+            for (auto& s : fetched) {
+                if (cancellationRequested(cancel)) return;
                 auto n = std::make_shared<NavidromeNode>();
                 n->type = NavidromeNode::Song; n->id = s.id;
                 n->displayName = s.title; n->subtitle = s.artist;
@@ -489,15 +747,24 @@ void BrowserWindow::collectSongsDeep(std::shared_ptr<NavidromeNode> node,
     }
     if (node->type == NavidromeNode::Artist) {
         if (node->childrenLoaded) {
-            for (auto& c : node->children) collectSongsDeep(c, out);
+            for (auto& child : node->children) {
+                if (cancellationRequested(cancel)) return;
+                collectSongsDeep(child, out, failedItems, cancel);
+            }
         } else {
             std::string err;
-            for (auto& a : navidrome::SubsonicClientWin::get()
-                               .getAlbumsForArtist(node->id, err)) {
+            auto fetched = navidrome::SubsonicClientWin::get()
+                .getAlbumsForArtist(node->id, err);
+            if (cancellationRequested(cancel)) return;
+            if (!err.empty()) ++failedItems;
+            for (auto& a : fetched) {
+                if (cancellationRequested(cancel)) return;
                 auto albumNode = std::make_shared<NavidromeNode>();
                 albumNode->type = NavidromeNode::Album; albumNode->id = a.id;
                 albumNode->displayName = a.name;
-                collectSongsDeep(albumNode, out);
+                albumNode->subtitle = a.artist;
+                albumNode->coverArtId = a.coverArtId;
+                collectSongsDeep(albumNode, out, failedItems, cancel);
             }
         }
     }
@@ -506,9 +773,12 @@ void BrowserWindow::collectSongsDeep(std::shared_ptr<NavidromeNode> node,
 // ---------------------------------------------------------------------------
 // Enqueue to foobar2000 playlist (call from main thread)
 // ---------------------------------------------------------------------------
-void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> songs,
-                                 bool play) {
-    if (songs.empty()) { setStatus(navidrome::l10n::noSongsSelected); return; }
+std::size_t BrowserWindow::enqueueNodes(
+        std::vector<std::shared_ptr<NavidromeNode>> songs, bool play) {
+    if (songs.empty()) {
+        setStatus(navidrome::l10n::noSongsSelected);
+        return 0;
+    }
 
     metadb_handle_list tracks;
     auto hints = metadb_io_v2::get()->create_hint_list();
@@ -540,6 +810,11 @@ void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> son
     }
     hints->on_done();
 
+    if (tracks.get_count() == 0) {
+        setStatus(navidrome::l10n::noSongsFound);
+        return 0;
+    }
+
     auto pm = playlist_manager::get();
     t_size pl = pm->get_active_playlist();
     if (pl == pfc_infinite) {
@@ -562,6 +837,18 @@ void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> son
     }
 
     setStatus(navidrome::l10n::addedTracks(tracks.get_count()));
+    return static_cast<std::size_t>(tracks.get_count());
+}
+
+void BrowserWindow::updateActionState() {
+    const BOOL idle = m_queueInProgress ? FALSE : TRUE;
+    if (m_tree.IsWindow()) m_tree.EnableWindow(idle);
+    if (m_search.IsWindow()) m_search.EnableWindow(idle);
+    if (m_refreshBtn.IsWindow()) m_refreshBtn.EnableWindow(idle);
+    if (m_addBtn.IsWindow()) m_addBtn.EnableWindow(idle);
+    if (m_playBtn.IsWindow()) m_playBtn.EnableWindow(idle);
+    if (m_addAllBtn.IsWindow())
+        m_addAllBtn.EnableWindow(idle && !m_libraryRoots.empty());
 }
 
 void BrowserWindow::setStatus(const std::string& msg) {

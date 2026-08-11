@@ -26,6 +26,7 @@ inline constexpr wchar_t customHeaders[] = L"自定义请求头…";
 inline constexpr wchar_t browserTitle[] = L"Navidrome 浏览器";
 inline constexpr wchar_t searchCue[] = L"搜索艺术家、专辑、歌曲…";
 inline constexpr wchar_t addToPlaylist[] = L"添加到播放列表";
+inline constexpr wchar_t addAllToPlaylist[] = L"添加全部";
 inline constexpr wchar_t playNow[] = L"立即播放";
 inline constexpr wchar_t refresh[] = L"刷新";
 
@@ -33,15 +34,41 @@ inline constexpr char loadingArtists[] = u8"正在加载艺术家…";
 inline constexpr char loading[] = u8"加载中…";
 inline constexpr char searching[] = u8"正在搜索…";
 inline constexpr char loadingTracks[] = u8"正在加载歌曲…";
+inline constexpr char queueBusy[] = u8"已有导入任务正在进行";
+inline constexpr char libraryNotLoaded[] = u8"完整音乐库尚未加载";
 inline constexpr char selectAtLeastOne[] = u8"请至少选择一项";
 inline constexpr char noSongsSelected[] = u8"未选择歌曲";
+inline constexpr char noSongsFound[] = u8"未找到可添加的歌曲";
 
 inline std::string artistCount(std::size_t count) {
     return std::to_string(count) + u8" 位艺术家";
 }
 
+inline std::string searchResultCount(std::size_t count) {
+    return std::to_string(count) + u8" 条搜索结果";
+}
+
+inline std::string importProgress(std::size_t completed, std::size_t total,
+                                  std::size_t songs, std::size_t failed) {
+    std::string result = u8"正在导入：已处理 " + std::to_string(completed) +
+        "/" + std::to_string(total) + u8" 位艺术家，已找到 " +
+        std::to_string(songs) + u8" 首歌曲";
+    if (failed > 0)
+        result += u8"，" + std::to_string(failed) + u8" 个项目加载失败";
+    return result;
+}
+
 inline std::string addedTracks(std::size_t count) {
     return u8"已添加 " + std::to_string(count) + u8" 首歌曲";
+}
+
+inline std::string addedTracksWithFailures(std::size_t count, std::size_t failed) {
+    return addedTracks(count) + u8"，" + std::to_string(failed) +
+        u8" 个项目加载失败";
+}
+
+inline std::string allItemsFailed(std::size_t failed) {
+    return u8"未添加歌曲，" + std::to_string(failed) + u8" 个项目加载失败";
 }
 
 inline std::string error(const std::string& message) {
