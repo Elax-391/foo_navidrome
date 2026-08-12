@@ -1,3 +1,10 @@
+## [1.4.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.3.0...v1.4.0) (2026-08-12)
+
+
+### Features
+
+* add support to ESLync for Windows ([ef5c7aa](https://github.com/santiagorod92/foo_navidrome/commit/ef5c7aa3011c47084cfab7c243f58b16c99927c8))
+
 ## [1.3.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.2.1...v1.3.0) (2026-07-21)
 
 
