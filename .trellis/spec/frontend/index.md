@@ -21,6 +21,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
 | [Windows Localization](./windows-localization.md) | Native Windows UI string, encoding, scope, and layout contracts | Active |
+| [Windows Library Import](./windows-library-import.md) | Incremental enumeration, state, lifecycle, compensation, and test contracts | Active |
 
 ---
 
