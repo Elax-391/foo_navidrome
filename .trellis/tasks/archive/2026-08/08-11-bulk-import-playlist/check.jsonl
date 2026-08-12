@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/08-11-bulk-import-playlist/prd.md","reason":"Verify observable behavior against AC1-AC8, including fixed full-library semantics, progress, partial failure, cancellation, and build output."}
-{"file":".trellis/tasks/08-11-bulk-import-playlist/research/findings.md","reason":"Recheck the affected Windows entry points and ensure the implementation addresses the documented lifetime and root-state risks."}
-{"file":".trellis/tasks/archive/2026-08/08-11-windows-zh-localization/research/sdk-build.md","reason":"Reuse and verify the known-good foobar2000 SDK sibling layout, v145 override, ATL/WTL requirements, and x64 artifact checks."}
-{"file":".trellis/spec/frontend/windows-localization.md","reason":"Verify all new Windows strings remain centralized and the four-button layout and build contract remain compliant."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify single-item and all-library operations share one queue and playlist-writing path."}

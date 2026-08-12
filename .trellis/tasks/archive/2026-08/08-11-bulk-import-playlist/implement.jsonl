@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/08-11-bulk-import-playlist/research/findings.md","reason":"Code anchors for the Windows single-selection model, recursive fetch path, playlist boundary, lifetime risk, and reusable build cache."}
-{"file":".trellis/spec/frontend/windows-localization.md","reason":"Requires centralized Chinese UI text, UTF-8 source handling, safe native layout, and Windows x64 build checks."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires the new all-library command to reuse one queue, recursion, and playlist-writing path instead of copying behavior."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Requires explicit contracts across BrowserWindow state, Subsonic requests, background collection, and foobar2000 playlist mutation."}
-

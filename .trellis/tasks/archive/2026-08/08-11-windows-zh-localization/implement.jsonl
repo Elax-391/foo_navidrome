@@ -1,2 +1,0 @@
-{"file":".trellis/tasks/08-11-windows-zh-localization/research/findings.md","reason":"Evidence-backed inventory of Windows UI strings and build constraints."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires a single source of truth for repeated UI constants and post-change residual searches."}
