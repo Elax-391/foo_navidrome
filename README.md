@@ -1,66 +1,147 @@
-# foo_navidrome
+# foo_navidrome Windows 中文增强版
 
-A [foobar2000](https://www.foobar2000.org/) component that lets you browse and stream music from a [Navidrome](https://www.navidrome.org/) server (or any [Subsonic](http://www.subsonic.org/)-compatible server) directly inside foobar2000.
+**简体中文** | [English](README_EN.md)
 
-## Installation (end users)
+这是 [santiagorod92/foo_navidrome](https://github.com/santiagorod92/foo_navidrome) 的 Windows 中文增强版。它是一个 [foobar2000](https://www.foobar2000.org/) 组件，可在 foobar2000 中浏览并播放 [Navidrome](https://www.navidrome.org/) 或其他兼容 [Subsonic](http://www.subsonic.org/) API 的音乐服务器。
 
-1. Download `foo_navidrome_<version>.fb2k-component` from the [Releases](../../releases) page. It's a **single multi-platform component** — one file ships macOS, Windows x86, Windows x64, and native Windows-on-ARM (ARM64EC). foobar2000 picks the right binary at load time.
-2. Drag the file onto foobar2000, or double-click it — foobar2000 installs it automatically
-3. Restart foobar2000
-4. Go to **Preferences › Tools › Navidrome** and enter your server URL and credentials
+本 Fork 主要面向 **foobar2000 v2 for Windows**，保留上游提交历史，并在上游 Windows 版本基础上增加中文界面、整库导入、增量入库、封面显示和 ESLyric 歌词支持。
 
-## Features
+## 主要功能
 
-- Browse your entire music library: Artists → Albums → Songs
-- Add albums or artists to playlist in one click (loads all songs automatically)
-- Right-click any row for a **Play Now / Add to Playlist** context menu
-- Double-click a song to play immediately
-- Search across artists, albums and songs
-- Album artwork displayed in Now Playing and playlists (fetched from Navidrome)
-- Credentials saved in foobar2000's config (persistent across restarts)
-- Test Connection button to verify server connectivity
-- **Native `navidrome://` URI scheme**: tracks added to playlists store a stable URI, not a transient HTTP URL — playlists survive credential rotation or server URL changes
-- Appears under **Preferences › Media Library › Library viewers** alongside Album List / Artist View
+- **简体中文界面**：Navidrome 参数页、媒体库浏览器、状态提示和错误信息均已汉化。
+- **浏览音乐库**：按艺术家 -> 专辑 -> 歌曲逐级展开，也可直接搜索艺术家、专辑或歌曲。
+- **添加全部**：一键把服务器中的所有文件夹或全部歌曲导入 foobar2000 播放列表。
+- **增量导入**：完成一次整库入库后，再次导入时只处理 Navidrome 中新增的歌曲，减少重复扫描和等待时间。
+- **播放列表操作**：支持添加到播放列表、立即播放和双击歌曲播放。
+- **封面显示**：从 Navidrome 获取封面，可在 foobar2000 的正在播放界面和播放列表中显示。
+- **ESLyric 歌词**：自动安装兼容 [ESLyric](https://github.com/ESLyric/release) 的 Navidrome 歌词脚本，支持同步歌词和普通歌词。
+- **稳定播放地址**：播放列表保存 `navidrome://track/<id>?...` 地址，修改服务器密码或地址后无需重新建立播放列表。
+- **连接测试**：可在参数页直接检查服务器地址和账号是否可用。
 
-## Platform Support
+## 系统要求
 
-| Platform | Status |
-|----------|--------|
-| macOS         | ✅ Supported — shipped (Xcode, foobar2000 v2 for Mac) |
-| Windows x64   | ✅ Supported — runtime-verified on native foobar2000 for Windows (Visual Studio 2022, or cross-compiled on Linux) |
-| Windows x86   | ✅ Supported — same build, 32-bit binary shipped in the component |
-| Windows ARM64 | ✅ Supported — native ARM64EC binary, runtime-verified |
-| Linux         | ⚙️ Runs under Wine — loads the Windows x64 build |
+- Windows 10/11 x64
+- [foobar2000 v2 for Windows](https://www.foobar2000.org/)
+- Navidrome 或其他兼容 Subsonic API 的服务器
+- 可选：[ESLyric](https://github.com/ESLyric/release)，用于显示歌词
 
-> A single `.fb2k-component` ships every platform: macOS bundle, Windows x86, x64,
-> and a native ARM64EC binary; foobar2000 selects the right one at load. The Windows
-> binaries build natively with Visual Studio, on CI, or **cross-compiled on Linux**
-> with clang-cl (see [Building on Linux](#building-on-linux-wine)).
+> 本 Fork 目前只维护和验证 Windows x64 版本。上游项目还支持 macOS、Windows x86、Windows ARM64EC 和 Wine，相关说明请查看[英文文档](README_EN.md)或[上游仓库](https://github.com/santiagorod92/foo_navidrome)。
 
----
+## 安装
 
-## Building on macOS
+### 安装组件包
 
-### Prerequisites
+1. 从本仓库的 [Releases](https://github.com/Elax-391/foo_navidrome/releases) 页面下载 Windows x64 的 `.fb2k-component` 文件。
+2. 双击安装包，或将它拖入 foobar2000。
+3. 按 foobar2000 提示确认安装并重启。
 
-- [foobar2000 v2 for Mac](https://www.foobar2000.org/mac)
-- Xcode 14+
-- foobar2000 SDK — source the SDK subdirs and `pfc/` from [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified) (an unmodified mirror of the official SDK; crucially it ships `helpers-mac/`, which the macOS build needs and some other mirrors omit). Arrange them as siblings of this repo:
+### 手动安装 DLL
 
-```
-foobar2000/
-  SDK/
-  helpers/
-  helpers-mac/                  ← macOS only (NSView+embed.m); from the reupen mirror
-  shared/
-  foobar2000_component_client/
-  foo_navidrome/                ← this repo
-pfc/                            ← sibling of foobar2000/ (also from the reupen mirror)
+也可以把 `foo_navidrome.dll` 复制到：
+
+```text
+%APPDATA%\foobar2000-v2\user-components-x64\foo_navidrome\
 ```
 
-The expected layout relative to `foo_navidrome/`:
+完整路径通常为：
 
+```text
+C:\Users\<用户名>\AppData\Roaming\foobar2000-v2\user-components-x64\foo_navidrome\foo_navidrome.dll
 ```
+
+复制后重新启动 foobar2000。
+
+## 配置 Navidrome
+
+1. 打开 **文件 -> 参数选项**。
+2. 进入 **工具 -> Navidrome**。
+3. 填写服务器地址，例如 `http://192.168.1.10:4533/`。
+4. 填写 Navidrome 用户名和密码。
+5. 如服务器需要额外 HTTP 请求头，在对应配置项中填写。
+6. 点击 **测试连接**；连接成功后点击 **应用** 或 **确定**。
+
+## 浏览和导入音乐
+
+组件会出现在：
+
+```text
+参数选项 -> 媒体库 -> Navidrome
+```
+
+常用操作：
+
+- 展开艺术家查看专辑，再展开专辑查看歌曲。
+- 在顶部搜索框中搜索艺术家、专辑或歌曲。
+- 选中条目后点击 **添加到播放列表** 或 **立即播放**。
+- 点击 **添加全部**，把完整音乐库一次性加入播放列表。
+- 双击歌曲可立即播放。
+
+### 增量导入规则
+
+首次点击 **添加全部** 时，组件会扫描完整音乐库并记录已成功导入的歌曲。后续再次执行时：
+
+- 只添加服务器中新出现的歌曲；
+- 已入库歌曲不会重复添加；
+- 如果服务器身份或账号发生变化，会使用对应的新导入状态；
+- 导入失败或被取消时，不会把未完成的结果标记为成功。
+
+如果确实需要重新执行完整导入，可在 Navidrome 参数页重置导入状态后再次运行。
+
+## 封面
+
+播放 `navidrome://` 歌曲时，组件会根据歌曲或专辑的 `coverArt` 标识从 Navidrome 获取封面。只要当前 foobar2000 布局中包含封面显示组件，就能在正在播放界面显示封面；播放列表是否显示封面取决于所用播放列表组件和列配置。
+
+如果封面没有显示，请检查：
+
+1. Navidrome 中对应专辑是否已有封面；
+2. foobar2000 是否已启用封面查看面板；
+3. 服务器地址和认证信息是否仍然有效；
+4. 歌曲是否由本组件以 `navidrome://` 地址加入播放列表。
+
+## ESLyric 歌词
+
+歌词功能通过 [ESLyric](https://github.com/ESLyric/release) 组件显示。
+
+1. 安装适用于当前 foobar2000 架构的 ESLyric。
+2. 打开一次 **工具 -> Navidrome** 参数页并保存配置。
+3. 本组件会在 foobar2000 配置目录下生成 Navidrome 歌词源脚本和不包含明文密码的配置文件。
+4. 在 foobar2000 布局中加入 ESLyric 面板。
+5. 播放一首由本组件添加的 Navidrome 歌曲，ESLyric 会使用歌曲 ID 获取歌词。
+
+脚本目录通常位于：
+
+```text
+%APPDATA%\foobar2000-v2\eslyric-data\scripts\
+```
+
+若服务器支持结构化歌词，时间轴会转换为 LRC；不支持时会自动回退到传统歌词接口。
+
+## Windows 构建
+
+### 依赖
+
+- Visual Studio 2022
+- **使用 C++ 的桌面开发**工作负载
+- MSVC v143 工具集
+- Windows SDK
+- [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified)
+
+将 SDK 和本仓库放置为以下结构：
+
+```text
+工作目录/
+├── pfc/
+└── foobar2000/
+    ├── SDK/
+    ├── helpers/
+    ├── shared/
+    ├── foobar2000_component_client/
+    └── foo_navidrome/              <- 本仓库
+```
+
+从 `foo_navidrome` 目录看，工程依赖以下相对路径：
+
+```text
 ../SDK/
 ../helpers/
 ../shared/
@@ -68,289 +149,62 @@ The expected layout relative to `foo_navidrome/`:
 ../../pfc/
 ```
 
-> If `pfc` is in a different location, create a symlink:
-> ```bash
-> ln -s /path/to/pfc /path/to/personal/pfc
-> ```
+### 编译步骤
 
-### Build steps
+1. 用 Visual Studio 2022 打开 `Windows/foo_navidrome.vcxproj`。
+2. 如本地 SDK 工程 GUID 与项目文件不一致，更新 `.vcxproj` 中的 `<ProjectReference>` GUID。
+3. 选择 **Release | x64**。
+4. 生成项目，得到 `foo_navidrome.dll`。
+5. 将 DLL 安装到 foobar2000 的 `user-components-x64\foo_navidrome` 目录并重启 foobar2000。
 
-The fastest dev loop is `./scripts/dev-build.sh` — bumps the patch version in
-`version.txt`, runs `xcodebuild`, and installs to your local foobar2000:
+项目也定义了 Win32 和 ARM64EC 配置，但本 Fork 当前只承诺 Windows x64 的维护与验证。
 
-```bash
-./scripts/dev-build.sh   # bump patch + build + install (see Scripts for --minor/--no-bump/… flags)
-```
+## 仓库关系
 
-Restart foobar2000 after the script finishes to pick up the new version.
+- `origin`：[Elax-391/foo_navidrome](https://github.com/Elax-391/foo_navidrome)
+- `upstream`：[santiagorod92/foo_navidrome](https://github.com/santiagorod92/foo_navidrome)
 
-If you prefer Xcode directly:
+同步上游时，建议先拉取 `upstream/main`，检查 Windows 相关差异和冲突，再合并到本 Fork。Windows 中文增强功能主要位于 `Windows/` 目录。
 
-1. Open `foo_navidrome.xcworkspace` in Xcode
-2. Select the **`foo_navidrome`** scheme (top-left scheme selector)
-3. Build: **Product › Build** or `Cmd+B`
-4. Run the install script:
-   ```bash
-   ./scripts/install-macos.sh
-   ```
-5. Restart foobar2000
+## 项目结构
 
-### Configuration
-
-1. Open **Preferences › Tools › Navidrome**
-2. Enter your server URL (e.g. `http://navidrome.local:4533/`)
-3. Enter your username and password
-4. Click **Test Connection** — you should see "Connected!"
-
-### Usage
-
-Two ways to open the browser:
-- **File › Open Navidrome Browser**
-- **Preferences › Media Library › Library viewers › Navidrome › Activate**
-
-Then:
-- Expand an artist to see albums, expand an album to see songs
-- Select one or more items and click **Add to Playlist** or **Play Now**
-- Double-click a song to play it immediately
-- Use the search field to search across your library
-
-Tracks land in the playlist as `navidrome://track/<id>?...` URIs. The component resolves these to the current HTTP stream when playback starts, so your playlists keep working if you change credentials or move the server.
-
----
-
-## Building on Windows
-
-### Prerequisites
-
-- [foobar2000 v2 for Windows](https://www.foobar2000.org/)
-- Visual Studio 2022 (with Desktop C++ workload)
-- foobar2000 Windows SDK — same directory layout as above
-
-### Build steps
-
-1. Open `Windows/foo_navidrome.vcxproj` in Visual Studio
-2. Update the `<ProjectReference>` GUIDs in the `.vcxproj` to match your local SDK project GUIDs
-3. Build in **Release | x64** configuration (the `.vcxproj` also defines **Win32** and **ARM64EC** if you need those binaries; CI builds all three)
-4. Copy `foo_navidrome.dll` to your foobar2000 components folder:
-   ```
-   %APPDATA%\foobar2000\user-components\foo_navidrome\
-   ```
-5. Restart foobar2000
-
-> CI builds all three Windows arches (x86, x64, ARM64EC) and merges them with the
-> macOS bundle into one `foo_navidrome_<version>.fb2k-component` per release.
-> No Windows machine? **Cross-compile the x64 DLL on Linux** (see below), or run
-> `./scripts/win-test.sh` to build on a GitHub Actions Windows runner (real
-> MSVC/MSBuild) and download the artifact.
-
----
-
-## Building on Linux (Wine)
-
-foobar2000 has no native Linux build, but it runs well under **Wine** (it *is* the
-Windows build). This repo can **cross-compile the Windows x64 component natively on
-Linux** with `clang-cl` + `lld-link` — no MSVC and no Wine needed for the build
-itself; Wine only runs foobar2000.
-
-### Prerequisites
-
-- foobar2000 for Windows installed under Wine (e.g. the AUR `foobar2000` package)
-- `llvm`, `clang`, `lld` (provide `clang-cl` / `lld-link`), plus `git`, `curl`, `unzip`, `zip`
-
-### One-time toolchain setup
-
-```bash
-./scripts/win-setup-toolchain.sh
-```
-
-Installs the LLVM toolchain, fetches the Windows SDK/CRT/**ATL** via
-[`xwin`](https://github.com/Jake-Shadle/xwin), downloads [WTL](https://sourceforge.net/projects/wtl/),
-and clones the foobar2000 SDK into the sibling layout (`../foobar2000`, `../pfc`, `../libPPUI`).
-
-### Build + install loop
-
-```bash
-./scripts/win-build-local.sh   # cross-compile + install into the Wine foobar2000 (see Scripts for --launch/--clean)
-```
-
-The DLL is installed to `~/.foobar2000/profile/user-components-x64/foo_navidrome/`
-and a distributable `foo_navidrome_<version>_win-x64.fb2k-component` is written to the
-repo root. `scripts/install-windows.sh` handles the install + packaging and can be run
-standalone after a build.
-
----
-
-## Scripts
-
-All helper scripts live in [`scripts/`](scripts/), grouped below by the OS you run
-them on. Note the cross-platform twist: this project is currently developed on
-**Linux**, and the **Windows component is built from Linux** (foobar2000 runs under
-Wine; the DLL is cross-compiled with clang-cl) — so the "Windows" scripts run on a
-Linux host. A *native* Windows build uses Visual Studio directly and needs no scripts.
-
-### Linux — build & test the Windows component (current dev environment)
-
-| Command | What it does |
-|---------|--------------|
-| `./scripts/win-setup-toolchain.sh` | One-time setup: install `clang-cl`/`lld-link`, fetch the Windows SDK/CRT/ATL (via xwin) + WTL, clone the SDK siblings |
-| `./scripts/win-build-local.sh` | Cross-compile the x64 DLL and install it into the Wine foobar2000 |
-| `./scripts/win-build-local.sh --launch` | …same, then relaunch foobar2000 |
-| `./scripts/win-build-local.sh --clean` | Wipe the object cache and rebuild from scratch |
-| `./scripts/install-windows.sh` | Install an already-built DLL + package the `.fb2k-component` (called by `win-build-local.sh`; `--new-release` to publish) |
-| `./scripts/win-test.sh` | Build the DLL on a GitHub Actions Windows runner (real MSVC/MSBuild), download the artifact, install it locally |
-
-### macOS — build & install the native Mac component
-
-| Command | What it does |
-|---------|--------------|
-| `./scripts/dev-build.sh` | Bump patch version, `xcodebuild` Release, install locally |
-| `./scripts/dev-build.sh --minor` · `--major` | Bump minor / major instead of patch |
-| `./scripts/dev-build.sh --no-bump` | Rebuild + install at the current version |
-| `./scripts/dev-build.sh --no-install` | Build only (skip install) |
-| `./scripts/dev-build.sh --new-release` | Build, install, package, then create a GitHub release |
-| `./scripts/install-macos.sh` | Install an already-built component + package the `.fb2k-component` (called by `dev-build.sh`) |
-
-### macOS — build & test the *Windows* component in a Win11 ARM VM
-
-No Windows machine needed: cross-compile the Windows x64 DLL on the Mac
-(`clang-cl` + `lld-link` + `xwin`) and runtime-test it in a headless Windows 11
-ARM64 QEMU/HVF guest. See [`scripts/win-vm/README.md`](scripts/win-vm/README.md)
-for the full walkthrough.
-
-| Command | What it does |
-|---------|--------------|
-| `./scripts/win-vm/setup-mac-toolchain.sh` | One-time: Homebrew deps + xwin CRT/SDK/ATL + WTL + foobar SDK |
-| `./scripts/win-vm/fetch-win11-arm.sh` | Build the Win11 ARM ISO (uupdump) + fetch the virtio ISO |
-| `./scripts/win-vm/win-vm.sh install` | Unattended headless Windows install into the QEMU guest |
-| `./scripts/win-vm/win-vm-test.sh --launch` | Cross-build the x64 DLL → deploy into the guest over SSH → relaunch foobar2000 |
-
-### CI (GitHub Actions — not run by hand)
-
-| Script | What it does |
-|--------|--------------|
-| `scripts/ci-build.sh <version>` | macOS Release build + packaging, invoked by semantic-release during a release |
-
-The Windows CI build is driven by `.github/workflows/build-windows.yml` (MSBuild on a
-`windows-latest` runner) — no shell script involved.
-
----
-
-## Project Structure
-
-```
+```text
 foo_navidrome/
-├── main.cpp                        # Shared: component version + filename
-├── stdafx.h                        # Shared precompiled header
-├── SubsonicTypes.h                 # Shared pure-C++ data types
-├── SubsonicClient.h/.mm            # macOS: ObjC Subsonic HTTP client
-├── NavidromeInput.h/.mm            # macOS: input_singletrack handler for navidrome:// URIs
-├── NavidromePlugin.mm              # macOS: plugin registration, cfg vars, prefs, menu, library_viewer
-├── NavidromeArtExtractor.mm        # macOS: album art fallback (album_art_fallback)
-├── Mac/
-│   ├── NavidromeBrowserController.h/.mm    # macOS: NSWindowController browser UI
-│   └── NavidromePreferencesController.h/.mm # macOS: NSViewController preferences
 ├── Windows/
-│   ├── stdafx.h/.cpp               # Windows precompiled header
-│   ├── SubsonicClientWin.h/.cpp    # Windows: WinHTTP Subsonic client
-│   ├── NavidromePluginWin.cpp      # Windows: plugin registration, cfg vars, prefs, menu, art
-│   ├── BrowserWindow.h/.cpp        # Windows: ATL browser window
-│   └── foo_navidrome.vcxproj       # Visual Studio project
-├── scripts/                        # build / install / toolchain helpers
-│   ├── dev-build.sh                #   macOS dev loop (bump + xcodebuild + install)
-│   ├── install-macos.sh            #   macOS install + package helper
-│   ├── ci-build.sh                 #   CI build (called by semantic-release)
-│   ├── win-setup-toolchain.sh      #   Linux: provision clang-cl + xwin SDK/ATL + WTL
-│   ├── win-build-local.sh          #   Linux: cross-compile the Windows DLL + install
-│   ├── install-windows.sh          #   Windows install + package helper
-│   └── win-test.sh                 #   build the Windows DLL on CI + install locally
-├── foo_navidrome.xcodeproj/        # Xcode project
-└── foo_navidrome.xcworkspace/      # Xcode workspace (includes SDK projects)
+│   ├── BrowserWindow.h/.cpp          # Windows 音乐库浏览界面
+│   ├── NavidromePluginWin.cpp        # 参数页、服务注册、播放与封面获取
+│   ├── SubsonicClientWin.h/.cpp      # WinHTTP Subsonic 客户端
+│   ├── LibraryImporter.h/.cpp        # 整库与增量导入
+│   ├── LibraryImportState.h/.cpp     # 增量导入状态
+│   ├── MediaEnrichmentLogic.h/.cpp   # 封面与歌词 URI 解析逻辑
+│   ├── EsLyricBridge.h/.cpp          # ESLyric 脚本与配置桥接
+│   ├── eslyric_scripts/              # ESLyric Navidrome 歌词源
+│   └── foo_navidrome.vcxproj         # Visual Studio 工程
+├── dist/                             # 已生成的 Windows 构建产物
+├── scripts/                          # 构建、安装和 CI 辅助脚本
+├── README.md                         # 默认中文文档
+└── README_EN.md                      # 英文文档
 ```
 
-## Contributing
+## 已知说明
 
-Pull requests are welcome. This section is the fast path from a fresh clone to a merged change.
+- “添加全部”的首次完整扫描速度取决于音乐库规模、服务器性能和网络延迟；之后的增量导入会明显减少重复工作。
+- 封面和歌词依赖服务器中已有的媒体元数据；服务器没有封面或歌词时，组件无法凭空生成。
+- ESLyric 是独立第三方组件，不包含在本仓库中，需要单独安装。
+- 本 Fork 的 Windows 功能与上游后续改动可能产生差异，合并上游更新前应先完成构建和运行测试。
 
-### Getting set up
+## 参与开发
 
-1. Fork and clone the repo, then lay out the sibling SDK directories described under [Prerequisites](#prerequisites) — the project will not build without `pfc/` and `foobar2000/{SDK,helpers,helpers-mac,shared,foobar2000_component_client}` next to it. The CI workflow clones [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified) into exactly that layout if you want a reference.
-2. Pick your platform's build path: [macOS](#building-on-macos) (Xcode), [Windows](#building-on-windows) (Visual Studio 2022), or [Linux → Windows cross-compile](#building-on-linux-wine) (clang-cl + Wine, the current primary dev environment).
-3. Read [`CLAUDE.md`](CLAUDE.md) before touching code — it documents the architecture, the per-platform file map, the design decisions, and a long list of hard-won gotchas (URI parsing traps, dual-mount `NSViewController` rules, CI log handling, etc.). It will save you hours.
+欢迎提交 Issue 和 Pull Request。提交前请：
 
-### How the code is laid out
+1. 保持改动聚焦于一个问题；
+2. 使用 [Conventional Commits](https://www.conventionalcommits.org/) 格式编写提交信息；
+3. 至少完成一次 **Release | x64** 构建；
+4. 对导入、封面或歌词改动运行对应测试；
+5. 不要在仓库中提交 Navidrome 密码、令牌、私有服务器地址或用户配置。
 
-The component is a **shared C++ core + per-platform UI/HTTP layers** — see [Project Structure](#project-structure) for the full file map. Quick orientation:
+## 许可证
 
-- **Cross-platform / pure C++:** `main.cpp`, `stdafx.h`, `SubsonicTypes.h`.
-- **macOS (ObjC++):** `SubsonicClient.mm` (NSURLSession HTTP), `NavidromePlugin.mm` (service registration), `NavidromeInput.mm` (the `navidrome://` input handler), `NavidromeArtExtractor.mm` (album art), `Mac/*` (the AppKit browser + preferences UI).
-- **Windows (Win32/ATL):** `Windows/SubsonicClientWin.cpp` (WinHTTP HTTP), `Windows/NavidromePluginWin.cpp`, `Windows/BrowserWindow.*`.
+本组件自身源代码采用 [MIT License](LICENSE)。原作者版权和许可证声明均予以保留。
 
-If you fix a bug in the data layer, check whether the **macOS and Windows HTTP clients both need it** — they are separate implementations of the same Subsonic protocol.
-
-### Key architectural concepts to know
-
-- **`navidrome://track/<id>?...` URI scheme.** Tracks are queued as these URIs, not raw HTTP URLs, so playlists survive credential/server changes. Metadata is embedded in the query string; the stream URL is resolved at decode time. **Any code that parses these URIs must be updated together when the scheme changes** — `NavidromeInput`, the art extractor's `is_our_path`, etc. The host-vs-path RFC-3986 trap is documented in `CLAUDE.md`.
-- **GUIDs.** Every registered service has a hardcoded `static constexpr GUID`. **If you fork this component you must regenerate all of them** (`NavidromePlugin.mm` and `NavidromeInput.mm`) — two components sharing a GUID will collide in foobar2000.
-- **Logging is the debugger.** There's no practical debugger-attach for foobar2000 components on Mac; use the `navi_log` file-logging helper (writes to `/tmp/foo_navidrome.log`, survives a crash). Remove temporary logs before submitting.
-
-### Coding conventions
-
-- Match the surrounding style (naming, comment density, indentation) rather than introducing a new one.
-- Keep platform-specific code behind the existing macOS / `Windows/` split — don't `#ifdef` platform branches into the shared core unless there's no alternative.
-- Update `CLAUDE.md` when you make a decision or hit a gotcha worth recording for the next contributor.
-
-### Commits, versioning, and PRs
-
-- Commit messages **must** follow [Conventional Commits](https://www.conventionalcommits.org/) — the release pipeline parses them to decide the version bump. See [Commit message convention](#commit-message-convention). In short: `feat:` → minor, `fix:`/`perf:`/`refactor:` → patch, `chore:`/`docs:`/`ci:`/etc. → no release, `!` or a `BREAKING CHANGE:` footer → major.
-- **Don't bump `version.txt` or edit `CHANGELOG.md` by hand** — semantic-release owns both. Your job is just well-typed commits.
-- Test on at least one platform and say which one in the PR. Cross-platform changes ideally get verified on both macOS and a Windows build (native, or cross-compiled + run under Wine — see the Linux section).
-- Keep PRs focused; one logical change per PR makes review and the auto-generated changelog far cleaner.
-
-### Good places to start
-
-- Windows UI polish and feature parity with the macOS browser (the Windows side is younger than the Mac path).
-- Playlist management (e.g. create a named foobar2000 playlist per artist/album).
-- Offline / caching support for streamed tracks.
-- Porting the Windows UI to the `navidrome://` URI-scheme architecture the macOS side uses (it currently lags behind — see `CLAUDE.md`).
-
-## Releasing
-
-Releases are automated. Every push to `main` triggers `.github/workflows/release.yml`, which:
-
-1. Lays out the sibling-directory tree the project expects (`pfc/`, `foobar2000/{SDK,helpers,helpers-mac,shared,foobar2000_component_client}`) by cloning [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified) — an unmodified mirror of the official SDK that includes `helpers-mac/`.
-2. Runs [`semantic-release`](https://semantic-release.gitbook.io/) per `.releaserc.json`. semantic-release inspects commits since the last tag and decides whether a release is needed.
-3. If a release is needed:
-   - `scripts/ci-build.sh <next-version>` pins `version.txt`, runs `xcodebuild -configuration Release`, ad-hoc signs, and packages the macOS `foo_navidrome_<version>.fb2k-component`.
-   - `CHANGELOG.md` is updated.
-   - A `chore(release): <version> [skip ci]` commit lands on `main` with `version.txt` + `CHANGELOG.md`.
-   - A GitHub release is created with the macOS `.fb2k-component` attached.
-   - The reusable `build-windows.yml` workflow then builds the Windows x64 DLL (MSVC/MSBuild on a `windows-latest` runner) and attaches `foo_navidrome_<version>_win-x64.fb2k-component` to the same release.
-
-### Commit message convention
-
-The pipeline reads [Conventional Commits](https://www.conventionalcommits.org/). The commit type determines whether (and how) the version is bumped:
-
-| Type                  | Effect          |
-| --------------------- | --------------- |
-| `feat: …`             | minor bump      |
-| `fix: …` / `perf: …`  | patch bump      |
-| `refactor: …`         | patch bump      |
-| `chore: …` / `docs: …` / `style: …` / `test: …` / `ci: …` | no release |
-| `feat!: …` or footer `BREAKING CHANGE:` | major bump |
-
-Versions are tracked in `version.txt` (consumed by the Xcode "Generate Version Header" build phase, which writes the gitignored `version_generated.h`).
-
-### Manual release (fallback)
-
-```bash
-# Build, install locally, package, and create a GitHub release in one shot
-./scripts/dev-build.sh --new-release
-```
-
-This bypasses the workflow and uses the `--new-release` path of `scripts/install-macos.sh`.
-
-## License
-
-This component's own source code is licensed under the **MIT License** — see the [LICENSE](LICENSE) file.
-
-It builds against the **foobar2000 SDK** and **PFC**, which are *not* covered by this license — they are distributed under their own terms by the foobar2000 author and are not included in this repository (the build fetches them separately; see the build instructions above). Redistribution of the SDK is subject to those terms.
+项目中附带的 WTL 使用 Microsoft Public License（MS-PL），详见 `Windows/third_party/wtl/` 中的声明。foobar2000 SDK 与 PFC 不属于本仓库 MIT 许可证覆盖范围，它们由各自作者按独立条款提供，且不会随本仓库源码一同分发。
