@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "NavidromeInputWin.h"
 #include "SubsonicClientWin.h"
+#include "MediaEnrichmentLogic.h"
 #include <SDK/input_impl.h>
 #include <SDK/file.h>
 #include <SDK/http_client.h>
@@ -23,39 +24,6 @@ namespace {
 
 constexpr const char* kPrefix    = "navidrome://track/";
 constexpr size_t      kPrefixLen = 18;
-
-std::string uriEncode(const std::string& s) {
-    static const char* hex = "0123456789ABCDEF";
-    std::string out;
-    for (unsigned char c : s) {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-            out.push_back((char)c);
-        else {
-            out.push_back('%');
-            out.push_back(hex[c >> 4]);
-            out.push_back(hex[c & 0x0F]);
-        }
-    }
-    return out;
-}
-
-std::string uriDecode(const std::string& s) {
-    auto hexv = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    };
-    std::string out;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size()) {
-            int hi = hexv(s[i + 1]), lo = hexv(s[i + 2]);
-            if (hi >= 0 && lo >= 0) { out.push_back((char)((hi << 4) | lo)); i += 2; continue; }
-        }
-        out.push_back(s[i] == '+' ? ' ' : s[i]);
-    }
-    return out;
-}
 
 class navidrome_input_win : public input_stubs {
 public:
@@ -150,7 +118,7 @@ private:
         size_t q = rest.find('?');
         if (q == std::string::npos) { idPart = rest; }
         else { idPart = rest.substr(0, q); query = rest.substr(q + 1); }
-        m_song_id = uriDecode(idPart);
+        m_song_id = navidrome::uriDecode(idPart);
 
         size_t pos = 0;
         while (pos <= query.size() && !query.empty()) {
@@ -159,7 +127,7 @@ private:
                 ? query.substr(pos) : query.substr(pos, amp - pos);
             size_t eq = pair.find('=');
             std::string k = (eq == std::string::npos) ? pair : pair.substr(0, eq);
-            std::string v = (eq == std::string::npos) ? "" : uriDecode(pair.substr(eq + 1));
+            std::string v = (eq == std::string::npos) ? "" : navidrome::uriDecode(pair.substr(eq + 1));
             if      (k == "title")       m_title  = v;
             else if (k == "artist")      m_artist = v;
             else if (k == "album")       m_album  = v;
@@ -198,12 +166,12 @@ std::string navidrome::makeTrackURI(const std::string& id,
                                     const std::string& coverArtId,
                                     const std::string& suffix) {
     if (id.empty()) return "";
-    std::string uri = std::string(kPrefix) + uriEncode(id);
+    std::string uri = std::string(kPrefix) + navidrome::uriEncode(id);
 
     std::vector<std::string> q;
-    if (!title.empty())      q.push_back("title="  + uriEncode(title));
-    if (!artist.empty())     q.push_back("artist=" + uriEncode(artist));
-    if (!album.empty())      q.push_back("album="  + uriEncode(album));
+    if (!title.empty())      q.push_back("title="  + navidrome::uriEncode(title));
+    if (!artist.empty())     q.push_back("artist=" + navidrome::uriEncode(artist));
+    if (!album.empty())      q.push_back("album="  + navidrome::uriEncode(album));
     if (track > 0)           q.push_back("tracknumber=" + std::to_string(track));
     if (year > 0)            q.push_back("date="   + std::to_string(year));
     if (duration > 0) {
@@ -211,8 +179,8 @@ std::string navidrome::makeTrackURI(const std::string& id,
         snprintf(b, sizeof(b), "%g", duration);
         q.push_back(std::string("duration=") + b);
     }
-    if (!coverArtId.empty()) q.push_back("coverArt=" + uriEncode(coverArtId));
-    if (!suffix.empty())     q.push_back("suffix="   + uriEncode(suffix));
+    if (!coverArtId.empty()) q.push_back("coverArt=" + navidrome::uriEncode(coverArtId));
+    if (!suffix.empty())     q.push_back("suffix="   + navidrome::uriEncode(suffix));
 
     for (size_t i = 0; i < q.size(); ++i) {
         uri += (i == 0 ? "?" : "&");

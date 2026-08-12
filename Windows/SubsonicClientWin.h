@@ -1,7 +1,9 @@
 #pragma once
 #include "../SubsonicTypes.h"
+#include "MediaEnrichmentLogic.h"
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace navidrome {
 
@@ -48,6 +50,8 @@ public:
 
     std::string streamURL(const std::string& songId);
     std::string coverArtURL(const std::string& id, int size = 0);
+    std::string coverArtURL(const SubsonicRequestContext& context,
+                            const std::string& id, int size = 0) const;
 
     // User-configured extra HTTP headers ("Name: Value" lines) applied to every
     // request — API, cover art and audio stream. Shared so the WinHTTP clients
@@ -56,6 +60,21 @@ public:
     // Same headers joined as a single CRLF-delimited wide string for
     // WinHttpAddRequestHeaders (empty if none configured).
     static std::wstring customHeadersWide();
+
+    // Generate Subsonic token from password + salt (md5(password + salt))
+    static std::string generateToken(const std::string& password, const std::string& salt);
+
+    // Binary fetch for cover art (PRD C2-C4, design §2.3)
+    struct BinaryFetchResult {
+        FetchClass cls;
+        uint32_t   httpStatus;
+        std::string contentType;
+        std::vector<uint8_t> body;
+    };
+    BinaryFetchResult httpGetBinary(const SubsonicRequestContext& context,
+                                    const std::string& url,
+                                    std::size_t maxBytes,
+                                    class abort_callback& abort) const;
 
 private:
     SubsonicClientWin() = default;

@@ -141,4 +141,12 @@ inline constexpr char unknownTitle[] = u8"未知标题";
 inline constexpr char menuOpenBrowser[] = u8"打开 Navidrome 浏览器";
 inline constexpr char menuBrowseDescription[] = u8"浏览并播放 Navidrome 中的音乐";
 
+// ESLyric integration
+inline constexpr char eslyricBridgeInstalled[] = u8"ESLyric 歌词桥接已安装";
+inline constexpr char eslyricBridgeNotInstalled[] = u8"未检测到 ESLyric（不影响播放）";
+
+inline std::string eslyricBridgeError(const std::string& message) {
+    return u8"ESLyric 桥接错误：" + message;
+}
+
 } // namespace navidrome::l10n

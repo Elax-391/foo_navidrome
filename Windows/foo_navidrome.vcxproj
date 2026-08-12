@@ -110,7 +110,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <AdditionalDependencies>
-        winhttp.lib;crypt32.lib;comctl32.lib;winmm.lib;%(AdditionalDependencies)
+        winhttp.lib;crypt32.lib;advapi32.lib;shell32.lib;comctl32.lib;winmm.lib;%(AdditionalDependencies)
       </AdditionalDependencies>
       <AdditionalLibraryDirectories>
         $(OutDir);%(AdditionalLibraryDirectories)
@@ -153,6 +153,12 @@
     <ClCompile Include="NavidromePluginWin.cpp" />
     <ClCompile Include="NavidromeInputWin.cpp" />
     <ClCompile Include="BrowserWindow.cpp" />
+    <ClCompile Include="MediaEnrichmentLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="EsLyricBridge.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="LibraryImportState.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -169,6 +175,9 @@
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />
     <ClInclude Include="Localization.h" />
+    <ClInclude Include="MediaEnrichmentLogic.h" />
+    <ClInclude Include="EsLyricBridge.h" />
+    <ClInclude Include="EsLyricScript.h" />
     <ClInclude Include="LibraryImportState.h" />
     <ClInclude Include="LibraryImportLogic.h" />
     <ClInclude Include="LibraryImporter.h" />

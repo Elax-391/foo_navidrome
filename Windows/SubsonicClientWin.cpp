@@ -287,6 +287,11 @@ std::wstring navidrome::SubsonicClientWin::customHeadersWide() {
     return joined.empty() ? std::wstring() : toWide(joined);
 }
 
+std::string navidrome::SubsonicClientWin::generateToken(const std::string& password,
+                                                         const std::string& salt) {
+    return md5hex(password + salt);
+}
+
 std::string navidrome::SubsonicClientWin::httpGet(
         const SubsonicRequestContext& context, const std::string& urlStr,
         std::string& outError) const {
@@ -306,7 +311,7 @@ std::string navidrome::SubsonicClientWin::httpGet(
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSess) { outError = navidrome::l10n::winHttpOpenFailed; return ""; }
-    WinHttpSetTimeouts(hSess, 0, 15000, 15000, 30000);
+    WinHttpSetTimeouts(hSess, 15000, 15000, 15000, 30000);
     applySecureProtocols(hSess);
 
     HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
@@ -355,7 +360,6 @@ std::string navidrome::SubsonicClientWin::httpGet(
     WinHttpCloseHandle(hSess);
     return result;
 }
-
 bool navidrome::SubsonicClientWin::ping(std::string& outError) {
     return ping(snapshot(), outError);
 }
@@ -580,8 +584,171 @@ std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
 }
 
 std::string navidrome::SubsonicClientWin::coverArtURL(const std::string& id, int size) {
-    std::string extra = "id=" + urlEncode(id);
-    if (size > 0) extra += "&size=" + std::to_string(size);
     auto context = snapshot();
-    return buildURL(context, "getCoverArt.view", extra);
+    return coverArtURL(context, id, size);
+}
+
+std::string navidrome::SubsonicClientWin::coverArtURL(
+        const SubsonicRequestContext& context, const std::string& id, int size) const {
+    return buildCoverArtUrl(context.serverUrl, context.username, context.password,
+        context.salt, id, size);
+}
+
+// ---------------------------------------------------------------------------
+// Binary fetch for cover art (PRD C2-C4, design §2.3)
+// ---------------------------------------------------------------------------
+navidrome::SubsonicClientWin::BinaryFetchResult
+navidrome::SubsonicClientWin::httpGetBinary(
+        const SubsonicRequestContext& context,
+        const std::string& urlStr,
+        std::size_t maxBytes,
+        abort_callback& abort) const {
+
+    BinaryFetchResult result;
+    result.cls = FetchClass::Transport;
+    result.httpStatus = 0;
+
+    std::wstring wurl = toWide(urlStr);
+
+    URL_COMPONENTS uc = {};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = {}, path[4096] = {};
+    uc.lpszHostName = host; uc.dwHostNameLength = 256;
+    uc.lpszUrlPath = path; uc.dwUrlPathLength = 4096;
+
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
+        return result; // Transport
+    }
+
+    HINTERNET hSess = WinHttpOpen(L"foo_navidrome/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSess) return result;
+
+    WinHttpSetTimeouts(hSess, 0, 15000, 15000, 30000);
+    applySecureProtocols(hSess);
+
+    // Check abort before connect
+    if (abort.is_aborting()) {
+        WinHttpCloseHandle(hSess);
+        result.cls = FetchClass::Aborted;
+        return result;
+    }
+
+    HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
+    if (!hConn) {
+        WinHttpCloseHandle(hSess);
+        return result;
+    }
+
+    DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path,
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+
+    if (!hReq) {
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        return result;
+    }
+
+    // Apply custom headers
+    std::string joined;
+    for (const auto& line : navidrome::parseHeaderLines(context.customHeaders)) {
+        if (!joined.empty()) joined += "\r\n";
+        joined += line;
+    }
+    std::wstring hdrs = joined.empty() ? std::wstring() : toWide(joined);
+    if (!hdrs.empty()) {
+        WinHttpAddRequestHeaders(hReq, hdrs.c_str(), (DWORD)-1,
+            WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    }
+
+    // Check abort before send
+    if (abort.is_aborting()) {
+        WinHttpCloseHandle(hReq);
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        result.cls = FetchClass::Aborted;
+        return result;
+    }
+
+    if (!WinHttpSendRequest(hReq, nullptr, 0, nullptr, 0, 0, 0) ||
+        !WinHttpReceiveResponse(hReq, nullptr)) {
+        WinHttpCloseHandle(hReq);
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        return result; // Transport
+    }
+
+    // Query status
+    DWORD status = 0, sz = sizeof(status);
+    if (!WinHttpQueryHeaders(hReq,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        nullptr, &status, &sz, nullptr)) {
+        status = 0;
+    }
+    result.httpStatus = status;
+    result.cls = classifyHttpStatus(status);
+
+    // Query Content-Type
+    wchar_t ctBuf[256] = {};
+    DWORD ctLen = sizeof(ctBuf);
+    if (WinHttpQueryHeaders(hReq, WINHTTP_QUERY_CONTENT_TYPE,
+        nullptr, ctBuf, &ctLen, nullptr)) {
+        result.contentType = toUtf8(ctBuf);
+    }
+
+    // Read body (only for 200)
+    if (status == 200) {
+        std::vector<uint8_t> body;
+        bool readSucceeded = true;
+        for (;;) {
+            DWORD avail = 0;
+            if (!WinHttpQueryDataAvailable(hReq, &avail)) {
+                readSucceeded = false;
+                break;
+            }
+            if (avail == 0) break;
+
+            // Check abort between chunks
+            if (abort.is_aborting()) {
+                WinHttpCloseHandle(hReq);
+                WinHttpCloseHandle(hConn);
+                WinHttpCloseHandle(hSess);
+                result.cls = FetchClass::Aborted;
+                return result;
+            }
+
+            // Check size limit
+            if (body.size() > maxBytes || avail > maxBytes - body.size()) {
+                WinHttpCloseHandle(hReq);
+                WinHttpCloseHandle(hConn);
+                WinHttpCloseHandle(hSess);
+                result.cls = FetchClass::InvalidContent;
+                return result;
+            }
+
+            std::vector<uint8_t> chunk(avail);
+            DWORD read = 0;
+            if (!WinHttpReadData(hReq, chunk.data(), avail, &read)) {
+                readSucceeded = false;
+                break;
+            }
+            body.insert(body.end(), chunk.begin(), chunk.begin() + read);
+        }
+
+        if (abort.is_aborting()) {
+            result.cls = FetchClass::Aborted;
+        } else if (!readSucceeded) {
+            result.cls = FetchClass::Transport;
+        } else {
+            result.cls = classifyBody(result.contentType, body, maxBytes);
+            if (result.cls == FetchClass::Ok) result.body = std::move(body);
+        }
+    }
+
+    WinHttpCloseHandle(hReq);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return result;
 }
