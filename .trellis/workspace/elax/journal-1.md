@@ -70,3 +70,25 @@ Added fast Navidrome tail import, full reconciliation, exact persistent song-ID 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Windows cover art and ESLyric lyrics
+
+**Date**: 2026-08-12
+**Task**: Windows cover art and ESLyric lyrics
+**Branch**: `main`
+
+### Summary
+
+Added real-host verified Windows Navidrome cover extraction, an ESLyric searcher/config bridge, hardened binary transport and cache behavior, deterministic tests, and a verified x64 component package.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `45beaca` | (see git log) |
+| `af91b5c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
