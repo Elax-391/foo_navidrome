@@ -17,6 +17,8 @@ Shared C++ core + per-platform UI/HTTP layers:
 - `Mac/NavidromeBrowserController.*` — `NSViewController` housing the Artists/Albums/Songs tree, search, action buttons. Mounted in two places: (a) directly inside the *Preferences › Media Library › Navidrome* prefs sub-page; (b) wrapped in a standalone `NSWindow` by `NavidromeShowStandaloneBrowser()` (called by the File menu and `library_viewer.activate()`). Each mount point creates a fresh controller — Cocoa requires each `NSView` to have a single superview, so the previous shared-singleton pattern would have broken dual-mount. Enqueues tracks as `navidrome://` URIs (not raw HTTP URLs).
 - `Mac/NavidromePreferencesController.*` — `NSViewController` preferences UI
 - `Windows/NavidromePluginWin.cpp`, `Windows/BrowserWindow.*` — Windows ATL equivalents. Ported to the `navidrome://` URI scheme (`BrowserWindow::enqueueNodes` builds `navidrome://track/` URIs; `NavidromeInputWin` decodes them). `BrowserWindow` can mount two ways like the Mac controller: a standalone window (`show()`, singleton — File menu / `library_viewer`) **and** an inline `WS_CHILD` panel (`createEmbedded()`) hosted in the *Preferences › Media Library › Navidrome* sub-page. Right-click on the tree opens a Play Now / Add to Playlist context menu (`WM_CONTEXTMENU`).
+- `Windows/MediaEnrichmentLogic.h/.cpp` — Windows-only, foobar-SDK-free helper module (URI/URL encode-decode, cover-art URL building, HTTP response classification, an LRU `CoverCache`, ESLyric `config.js` generation). Kept free of SDK/WinHTTP types specifically so `Windows/tests/MediaEnrichmentLogicTests.cpp` can build and run as a standalone host executable (see Development below). `NavidromeArtExtractor` (in `NavidromePluginWin.cpp`) is a real `album_art_extractor` (not a fallback) built on top of it, with results cached by (server, user, coverId).
+- `Windows/EsLyricBridge.h/.cpp`, `Windows/EsLyricScript.h` — bridges to the third-party [ESLyric](https://github.com/esdatura/eslyric-fb2k) foobar2000 component, if installed (`%APPDATA%\foobar2000\profile\eslyric-data\` present). On startup and whenever credentials/headers are saved, writes a generated `scripts/lib/foo_navidrome/config.js` (server URL + Subsonic token, never the raw password) and a searcher script `scripts/searcher/navidrome.js` (embedded as `kEsLyricScriptSource`) that calls Navidrome's `getLyricsBySongId.view`, falling back to the legacy `getLyrics.view` artist/title lookup per-server once the by-id endpoint 404s. A no-op (empty error string) when ESLyric isn't installed.
 
 GUIDs for cfg vars / prefs page / menu commands are hardcoded constants in `NavidromePlugin.mm` (lines 11–17) — must be regenerated when forking.
 
@@ -43,6 +45,8 @@ pfc/                    ← sibling of foobar2000/
 ### Windows
 
 Visual Studio 2022. `Windows/foo_navidrome.vcxproj` — must update `<ProjectReference>` GUIDs to match the local SDK projects. Build Release|x64, copy `.dll` to `%APPDATA%\foobar2000\user-components\foo_navidrome\`.
+
+`Windows/tests/MediaEnrichmentTests.vcxproj` builds `Windows/tests/MediaEnrichmentLogicTests.cpp` + `Windows/MediaEnrichmentLogic.cpp` into a standalone console exe — no SDK/`.sln` dependency, since `MediaEnrichmentLogic.*` only uses WinHTTP/wincrypt + stdlib. Build Release|x64 and run the exe directly; `build-windows.yml` does this on every CI run (build, then execute, failing the job on any `FAIL:` line).
 
 ### Windows testing on macOS (no PC / no Wine)
 
@@ -101,6 +105,12 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 - GUIDs for all services live as `static constexpr GUID` in the namespace that registers them. The input handler's GUID is in `NavidromeInput.mm`; the others are in `NavidromePlugin.mm` (lines 11-18). Must be regenerated when forking the component.
 
 ## Gotchas
+
+- **`MediaEnrichmentLogic.cpp` / `EsLyricBridge.cpp` must stay `<PrecompiledHeader>NotUsing</PrecompiledHeader>` in `foo_navidrome.vcxproj`.** The rest of `Windows/*.cpp` uses the shared `stdafx.h` PCH. `MediaEnrichmentLogic.cpp` deliberately doesn't include `stdafx.h` at all (kept SDK-free so `Windows/tests/MediaEnrichmentTests.vcxproj` can compile it standalone, no foobar SDK/PCH involved); `EsLyricBridge.cpp` does include `stdafx.h` but is marked `NotUsing` to match. Don't "clean up" either without checking both project files still build.
+
+- **`scripts/win-build-local.sh` hardcodes its own component source list (SRCS) instead of reading `foo_navidrome.vcxproj`.** Adding a new `Windows/*.cpp` to the vcxproj (CI/MSVC build) does NOT make it visible to the local clang-cl/Wine build — it silently compiles without it and fails at link time with a wall of undefined symbols. When you add a source file, add it to both `foo_navidrome.vcxproj`'s `ClCompile` `ItemGroup` AND the `echo "$REPO/Windows/....cpp"` lines in `win-build-local.sh`.
+
+- **Cover-art cache (`CoverCache`) and the ESLyric bridge config both need explicit invalidation on credential/header changes** — they're keyed/generated from server URL + username + token at the time of the last save, not read live. `NavidromePluginWin.cpp` calls `CoverCache::instance().clear()` and re-runs `EsLyricBridge::installOrUpdate()` in both `NavidromeHeadersWindow::OnSave` and `NavidromePrefsInstance::apply()`. If you add another place credentials/headers can change, wire the same two calls in or covers/lyrics will silently keep using stale auth.
 
 - **`install-macos.sh` must prefer Release over Debug builds.** DerivedData often contains a stale Debug `.component` from past Xcode builds. The script filters by `*/Products/Release/*` first, then sorts by mtime descending. If you change build configurations, audit `find_component()` in `install-macos.sh`.
 
