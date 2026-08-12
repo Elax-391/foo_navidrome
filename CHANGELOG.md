@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/santiagorod92/foo_navidrome/compare/v1.4.0...v1.4.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* publish releases to foobar2000.org from self-hosted runner ([ece28b7](https://github.com/santiagorod92/foo_navidrome/commit/ece28b7d34365489997d51663fa01561746ef0c1))
+
 ## [1.4.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.3.0...v1.4.0) (2026-08-12)
 
 
