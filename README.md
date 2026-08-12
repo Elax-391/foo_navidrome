@@ -21,6 +21,25 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 - Test Connection button to verify server connectivity
 - **Native `navidrome://` URI scheme**: tracks added to playlists store a stable URI, not a transient HTTP URL — playlists survive credential rotation or server URL changes
 - Appears under **Preferences › Media Library › Library viewers** alongside Album List / Artist View
+- **Lyrics on Windows** via [ESLyric](https://github.com/ESLyric/release) — see [Lyrics (ESLyric)](#lyrics-eslyric-windows)
+
+## Lyrics (ESLyric, Windows)
+
+On Windows, foo_navidrome can feed lyrics into [ESLyric](https://github.com/ESLyric/release), a separate foobar2000 component that displays synced/plain lyrics panels. foo_navidrome doesn't render lyrics itself — it generates the config + lookup script ESLyric needs to talk to your Navidrome server.
+
+1. Download the latest ESLyric release from **https://github.com/ESLyric/release** and install it the same way as foo_navidrome (drag the `.fb2k-component` onto foobar2000). Match the architecture to your foo_navidrome install (x64 / ARM64EC).
+2. Open **Preferences › Tools › Navidrome** once and click **OK**/**Apply** — even with no changes, this is what makes foo_navidrome (re)generate the ESLyric config/script for your current server + credentials. It also runs automatically on every foobar2000 startup once ESLyric is detected, and again whenever you save Custom Headers.
+3. Add the ESLyric panel to your layout (Default UI / Columns UI element picker).
+4. Play a track that foo_navidrome added (a `navidrome://track/<id>` URI). ESLyric calls Navidrome's `getLyricsBySongId.view` for that song, falling back to the classic artist/title `getLyrics.view` lookup on servers that don't support by-id lookup. Synced lyrics are converted to LRC timing when the server provides them.
+
+Generated files live under your foobar2000 profile:
+
+```
+%APPDATA%\foobar2000-v2\eslyric-data\scripts\lib\foo_navidrome\config.js   # server URL + Subsonic token — never your raw password
+%APPDATA%\foobar2000-v2\eslyric-data\scripts\searcher\navidrome.js        # the lyrics-fetching script
+```
+
+Don't hand-edit them — they're overwritten on the next config save/startup. If ESLyric isn't installed, foo_navidrome silently skips this step (check **View › Console** for a one-line "not detected" note on startup).
 
 ## Platform Support
 
@@ -253,7 +272,12 @@ foo_navidrome/
 │   ├── stdafx.h/.cpp               # Windows precompiled header
 │   ├── SubsonicClientWin.h/.cpp    # Windows: WinHTTP Subsonic client
 │   ├── NavidromePluginWin.cpp      # Windows: plugin registration, cfg vars, prefs, menu, art
+│   ├── NavidromeInputWin.h/.cpp    # Windows: navidrome:// input_singletrack handler
 │   ├── BrowserWindow.h/.cpp        # Windows: ATL browser window
+│   ├── MediaEnrichmentLogic.h/.cpp # Windows: URI/cover-art/ESLyric-config logic (SDK-free, unit-tested)
+│   ├── EsLyricBridge.h/.cpp        # Windows: writes the ESLyric config + searcher script
+│   ├── EsLyricScript.h             # Windows: embedded ESLyric searcher script source
+│   ├── tests/                      # Windows: standalone unit tests for MediaEnrichmentLogic
 │   └── foo_navidrome.vcxproj       # Visual Studio project
 ├── scripts/                        # build / install / toolchain helpers
 │   ├── dev-build.sh                #   macOS dev loop (bump + xcodebuild + install)

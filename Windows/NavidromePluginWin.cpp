@@ -1,12 +1,26 @@
 #include "stdafx.h"
 #include "BrowserWindow.h"
 #include "SubsonicClientWin.h"
+#include "MediaEnrichmentLogic.h"
+#include "EsLyricBridge.h"
 #include <SDK/cfg_var.h>
 #include <SDK/album_art.h>
 #include <SDK/album_art_helpers.h>
+#include <SDK/initquit.h>
 #include <string>
 #include <cctype>
+#include <mutex>
+#include <set>
 #pragma comment(lib, "winhttp.lib")
+
+namespace {
+    void refreshEsLyricBridge() {
+        auto ctx = navidrome::SubsonicClientWin::get().snapshot();
+        std::string err = navidrome::EsLyricBridge::installOrUpdate(ctx);
+        if (!err.empty())
+            console::print(("ESLyric bridge error: " + err).c_str());
+    }
+}
 
 static std::wstring u8ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -145,6 +159,8 @@ private:
 
     void OnSave(UINT, int, HWND) {
         navidrome::cfg_custom_headers.set(editTextU8().c_str());
+        navidrome::CoverCache::instance().clear();
+        refreshEsLyricBridge();
         ShowWindow(SW_HIDE);
     }
 
@@ -190,7 +206,13 @@ public:
         return m_changed ? preferences_state::changed | preferences_state::resettable
                          : 0;
     }
-    void apply()  override { saveSettings(); m_changed = false; notifyCb(); }
+    void apply()  override {
+        saveSettings();
+        navidrome::CoverCache::instance().clear();
+        refreshEsLyricBridge();
+        m_changed = false;
+        notifyCb();
+    }
     void reset()  override {
         SetDlgItemText(IDC_URL,  L"http://localhost:4533/");
         SetDlgItemText(IDC_USER, L"");
@@ -400,88 +422,79 @@ public:
 FB2K_SERVICE_FACTORY(NavidromeMenuCmd);
 
 // ---------------------------------------------------------------------------
-// Album art fallback — serves cover art from Navidrome's getCoverArt endpoint
+// Cover art extractor — serves cover art from Navidrome's getCoverArt
+// endpoint, matching both navidrome:// URIs and legacy /rest/stream.view
+// URLs. A real extractor (not a fallback) so foobar always calls open() for
+// our paths, and results are cached in-process (see MediaEnrichmentLogic.h)
+// to avoid refetching the same cover for every track in an album.
 // ---------------------------------------------------------------------------
-static std::string urlParam(const char* url, const char* key) {
-    std::string k = std::string(key) + "=";
-    const char* p = strstr(url, k.c_str());
-    if (!p) return "";
-    p += k.size();
-    const char* e = strchr(p, '&');
-    return e ? std::string(p, e) : std::string(p);
+namespace {
+    // Session-deduped console diagnostics for non-not-found cover failures,
+    // so a broken server doesn't spam the console once per track.
+    std::mutex g_coverDiagMutex;
+    std::set<std::pair<navidrome::FetchClass, std::string>> g_coverDiagSeen;
+
+    void logCoverError(navidrome::FetchClass cls, const std::string& id) {
+        using namespace navidrome;
+        if (cls == FetchClass::NotFound) return; // not-found is silent (normal)
+
+        {
+            std::lock_guard<std::mutex> lock(g_coverDiagMutex);
+            if (!g_coverDiagSeen.insert({cls, id}).second) return; // already logged
+        }
+
+        const char* msg = "";
+        switch (cls) {
+            case FetchClass::Auth:           msg = "Cover art fetch: authentication failed"; break;
+            case FetchClass::ServerError:    msg = "Cover art fetch: server error"; break;
+            case FetchClass::Transport:      msg = "Cover art fetch: network transport error"; break;
+            case FetchClass::InvalidContent: msg = "Cover art fetch: invalid content"; break;
+            default: break;
+        }
+        if (*msg) {
+            console::print(msg);
+        }
+    }
 }
 
 class NavidromeArtInstance : public album_art_extractor_instance_v2 {
 public:
-    explicit NavidromeArtInstance(const char* songId) : m_id(songId) {}
+    NavidromeArtInstance(const std::string& coverId,
+                         const navidrome::SubsonicRequestContext& ctx)
+        : m_id(coverId), m_context(ctx) {}
 
-    album_art_data_ptr query(const GUID& what, abort_callback&) override {
+    album_art_data_ptr query(const GUID& what, abort_callback& abort) override {
         if (what != album_art_ids::cover_front) throw exception_album_art_not_found();
 
-        std::string url = navidrome::SubsonicClientWin::get().coverArtURL(m_id, 0);
-        std::string err;
-        // Reuse httpGet via SubsonicClientWin
-        std::string body = navidrome::SubsonicClientWin::get().streamURL(m_id); // placeholder
-        // Fetch binary image data with WinHTTP
-        body = "";
-        HINTERNET hSess = WinHttpOpen(L"foo_navidrome/1.0",
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        if (hSess) {
-            // Offer modern TLS only (TLS 1.2/1.3). See applySecureProtocols in
-            // SubsonicClientWin.cpp for the Wine min-TLS-1.3 caveat.
-            {
-                DWORD proto = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
-#ifdef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
-                proto |= WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
-#endif
-                WinHttpSetOption(hSess, WINHTTP_OPTION_SECURE_PROTOCOLS, &proto, sizeof(proto));
-            }
-            std::wstring wurl(url.begin(), url.end());
-            // Proper wide conversion
-            int n = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
-            wurl.resize(n); MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, &wurl[0], n);
-            if (!wurl.empty() && wurl.back()==0) wurl.pop_back();
-
-            URL_COMPONENTS uc = {}; uc.dwStructSize = sizeof(uc);
-            wchar_t host[256]={}, path[4096]={};
-            uc.lpszHostName=host; uc.dwHostNameLength=256;
-            uc.lpszUrlPath=path;  uc.dwUrlPathLength=4096;
-            if (WinHttpCrackUrl(wurl.c_str(),0,0,&uc)) {
-                HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
-                if (hConn) {
-                    DWORD flags = (uc.nScheme==INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-                    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path, nullptr,
-                        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-                    if (hReq) {
-                        std::wstring hdrs = navidrome::SubsonicClientWin::customHeadersWide();
-                        if (!hdrs.empty())
-                            WinHttpAddRequestHeaders(hReq, hdrs.c_str(), (DWORD)-1,
-                                WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-                        if (WinHttpSendRequest(hReq,nullptr,0,nullptr,0,0,0) &&
-                            WinHttpReceiveResponse(hReq,nullptr)) {
-                            DWORD status=0,sz=sizeof(status);
-                            WinHttpQueryHeaders(hReq,
-                                WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,
-                                nullptr,&status,&sz,nullptr);
-                            if (status==200) {
-                                DWORD avail=0;
-                                while (WinHttpQueryDataAvailable(hReq,&avail) && avail>0) {
-                                    std::string chunk(avail,'\0');
-                                    DWORD read=0;
-                                    WinHttpReadData(hReq,&chunk[0],avail,&read);
-                                    body.append(chunk,0,read);
-                                }
-                            }
-                        }
-                        WinHttpCloseHandle(hReq);
-                    }
-                    WinHttpCloseHandle(hConn);
-                }
-            }
-            WinHttpCloseHandle(hSess);
+        // Check cache first
+        auto cached = navidrome::CoverCache::instance().get(
+            m_context.serverUrl, m_context.username, m_id);
+        if (!cached.empty()) {
+            return album_art_data_impl::g_create(cached.data(), cached.size());
         }
-        if (body.empty()) throw exception_album_art_not_found();
-        return album_art_data_impl::g_create(body.data(), body.size());
+
+        // Fetch from server
+        std::string url = navidrome::SubsonicClientWin::get().coverArtURL(
+            m_context, m_id, 0);
+        static constexpr std::size_t kMaxCoverBytes = 20 * 1024 * 1024; // 20 MB
+
+        auto result = navidrome::SubsonicClientWin::get().httpGetBinary(
+            m_context, url, kMaxCoverBytes, abort);
+
+        if (result.cls == navidrome::FetchClass::Aborted) {
+            throw exception_aborted();
+        }
+
+        if (result.cls != navidrome::FetchClass::Ok) {
+            logCoverError(result.cls, m_id);
+            throw exception_album_art_not_found();
+        }
+
+        // Cache success
+        navidrome::CoverCache::instance().put(
+            m_context.serverUrl, m_context.username, m_id, result.body);
+
+        return album_art_data_impl::g_create(result.body.data(), result.body.size());
     }
 
     album_art_path_list::ptr query_paths(const GUID&, abort_callback&) override {
@@ -490,33 +503,42 @@ public:
 
 private:
     std::string m_id;
+    navidrome::SubsonicRequestContext m_context;
 };
 
-class NavidromeArtFallback : public album_art_fallback {
+class NavidromeArtExtractor : public album_art_extractor {
 public:
-    album_art_extractor_instance_v2::ptr open(metadb_handle_list_cref items,
-        pfc::list_base_const_t<GUID> const&, abort_callback&) override {
-        for (t_size i = 0; i < items.get_count(); i++) {
-            const char* path = items[i]->get_path();
-            bool isNavidromeUri = strncmp(path, "navidrome://", 12) == 0;
-            if (!isNavidromeUri && !strstr(path, "/rest/stream.view"))
-                continue;
+    bool is_our_path(const char* p, const char*) override {
+        if (!p) return false;
+        // Match navidrome:// OR legacy /rest/stream.view
+        return strncmp(p, "navidrome://", 12) == 0 || strstr(p, "/rest/stream.view") != nullptr;
+    }
 
-            // Prefer the album/folder coverArt id embedded at enqueue time;
-            // fall back to the song id (query "id=" for legacy URLs, or the
-            // <id> path segment of navidrome://track/<id>).
-            std::string id = urlParam(path, "coverArt");
-            if (id.empty()) id = urlParam(path, "id");
-            if (id.empty() && strncmp(path, "navidrome://track/", 18) == 0) {
-                const char* idStart = path + 18;
-                const char* idEnd = strchr(idStart, '?');
-                if (!idEnd) idEnd = idStart + strlen(idStart);
-                if (idEnd > idStart) id.assign(idStart, idEnd - idStart);
-            }
-            if (!id.empty())
-                return fb2k::service_new<NavidromeArtInstance>(id.c_str());
-        }
-        throw exception_album_art_not_found();
+    album_art_extractor_instance_ptr open(file_ptr, const char* path,
+                                          abort_callback&) override {
+        std::string id = navidrome::resolveArtId(path);
+        if (id.empty()) throw exception_album_art_not_found();
+
+        auto ctx = navidrome::SubsonicClientWin::get().snapshot();
+        return fb2k::service_new<NavidromeArtInstance>(id, ctx);
     }
 };
-FB2K_SERVICE_FACTORY(NavidromeArtFallback);
+FB2K_SERVICE_FACTORY(NavidromeArtExtractor);
+
+// ---------------------------------------------------------------------------
+// Init/quit — installs/refreshes the ESLyric bridge on startup so lyrics work
+// without opening prefs first; a no-op when ESLyric isn't installed.
+// ---------------------------------------------------------------------------
+class NavidromeInitQuit : public initquit {
+public:
+    void on_init() override {
+        if (!navidrome::EsLyricBridge::isEsLyricInstalled()) {
+            console::print("ESLyric not detected (playback unaffected)");
+            return;
+        }
+        refreshEsLyricBridge();
+    }
+
+    void on_quit() override {}
+};
+FB2K_SERVICE_FACTORY(NavidromeInitQuit);

@@ -193,6 +193,23 @@ jobs:
             Write-Host "built $($t.Platform) -> $destDir\foo_navidrome.dll"
           }
 
+      # Standalone host-side unit tests for the cover-art / ESLyric config
+      # logic in MediaEnrichmentLogic.cpp — pure stdlib, no foobar2000 SDK
+      # dependency, so it builds and runs directly on the runner.
+      - name: Build and run MediaEnrichmentLogic unit tests
+        shell: pwsh
+        working-directory: foobar2000/foo_navidrome
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testOut = "$PWD\out\tests\"
+          msbuild Windows\tests\MediaEnrichmentTests.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 `
+            /p:OutDir=$testOut `
+            /m /nologo /v:minimal "/clp:ErrorsOnly;Summary"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$testOut\MediaEnrichmentTests.exe"
+          if ($LASTEXITCODE -ne 0) { Write-Error "MediaEnrichmentLogic tests failed"; exit $LASTEXITCODE }
+
       - name: Upload msbuild log on failure
         if: failure()
         uses: actions/upload-artifact@v6

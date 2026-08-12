@@ -138,6 +138,8 @@ mapfile -t SRCS < <(
     echo "$REPO/Windows/NavidromePluginWin.cpp"
     echo "$REPO/Windows/NavidromeInputWin.cpp"
     echo "$REPO/Windows/BrowserWindow.cpp"
+    echo "$REPO/Windows/MediaEnrichmentLogic.cpp"
+    echo "$REPO/Windows/EsLyricBridge.cpp"
   } |
   # Excluded from the SDK's "FB2K" build configs: pfc-fb2k-hooks.cpp provides the
   # standalone (non-fb2k) crashHook/winFormatSystemErrorMessageHook that would
