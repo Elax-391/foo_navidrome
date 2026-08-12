@@ -33,9 +33,26 @@ struct Song {
     std::string albumId;
     std::string coverArtId;
     std::string suffix;
+    std::string created;
     int    track    = 0;
     int    year     = 0;
     double duration = 0.0;
+};
+
+struct MusicFolder {
+    std::string id;
+    std::string name;
+};
+
+struct ServerInfo {
+    std::string type;
+    std::string version;
+    bool openSubsonic = false;
+};
+
+struct ScanStatus {
+    bool scanning = false;
+    std::string lastScan;
 };
 
 struct SearchResults {

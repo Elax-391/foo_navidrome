@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 #include "../SubsonicTypes.h"
+#include "LibraryImporter.h"
 #include <map>
 #include <memory>
 #include <atomic>
@@ -13,6 +14,8 @@
 #define WM_NAVIDROME_CHILDREN (WM_USER + 102)
 #define WM_NAVIDROME_QUEUE_PROGRESS (WM_USER + 103)
 #define WM_NAVIDROME_QUEUE_COMPLETE (WM_USER + 104)
+#define WM_NAVIDROME_LIBRARY_PROGRESS (WM_USER + 105)
+#define WM_NAVIDROME_LIBRARY_COMPLETE (WM_USER + 106)
 
 // ---------------------------------------------------------------------------
 // Tree node
@@ -71,6 +74,24 @@ struct QueueCompletePayload {
     bool closeAfter = false;
 };
 
+struct LibraryProgressPayload {
+    std::uint64_t operationId = 0;
+    navidrome::LibraryImportProgress progress;
+};
+
+struct LibraryCompletePayload {
+    std::uint64_t operationId = 0;
+    navidrome::LibraryImportResult result;
+};
+
+struct PlaylistAppendReceipt {
+    t_size playlist = pfc_infinite;
+    t_size insertPos = pfc_infinite;
+    t_size count = 0;
+    metadb_handle_list tracks;
+    bool success = false;
+};
+
 // ---------------------------------------------------------------------------
 // BrowserWindow
 // ---------------------------------------------------------------------------
@@ -93,12 +114,15 @@ public:
         MESSAGE_HANDLER(WM_NAVIDROME_CHILDREN, OnNavidromeChildren)
         MESSAGE_HANDLER(WM_NAVIDROME_QUEUE_PROGRESS, OnQueueProgress)
         MESSAGE_HANDLER(WM_NAVIDROME_QUEUE_COMPLETE, OnQueueComplete)
+        MESSAGE_HANDLER(WM_NAVIDROME_LIBRARY_PROGRESS, OnLibraryProgress)
+        MESSAGE_HANDLER(WM_NAVIDROME_LIBRARY_COMPLETE, OnLibraryComplete)
         NOTIFY_CODE_HANDLER_EX(TVN_ITEMEXPANDING, OnTreeExpanding)
         NOTIFY_CODE_HANDLER_EX(NM_DBLCLK,        OnTreeDblClick)
         NOTIFY_CODE_HANDLER_EX(NM_RETURN,        OnTreeReturn)
         MSG_WM_CONTEXTMENU(OnContextMenu)
         COMMAND_ID_HANDLER_EX(IDC_ADD,     OnAdd)
         COMMAND_ID_HANDLER_EX(IDC_ADD_ALL, OnAddAll)
+        COMMAND_ID_HANDLER_EX(IDC_RECONCILE, OnReconcile)
         COMMAND_ID_HANDLER_EX(IDC_PLAY,    OnPlay)
         COMMAND_ID_HANDLER_EX(IDC_REFRESH, OnRefresh)
         COMMAND_HANDLER_EX(IDC_SEARCH, EN_CHANGE, OnSearchChanged)
@@ -113,6 +137,7 @@ private:
         IDC_REFRESH= 1005,
         IDC_STATUS = 1006,
         IDC_ADD_ALL= 1007,
+        IDC_RECONCILE=1008,
     };
 
     LRESULT OnCreate(LPCREATESTRUCT);
@@ -123,12 +148,15 @@ private:
     LRESULT OnNavidromeChildren(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnQueueProgress(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnQueueComplete(UINT, WPARAM, LPARAM, BOOL&);
+    LRESULT OnLibraryProgress(UINT, WPARAM, LPARAM, BOOL&);
+    LRESULT OnLibraryComplete(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnTreeExpanding(LPNMHDR);
     LRESULT OnTreeDblClick(LPNMHDR);
     LRESULT OnTreeReturn(LPNMHDR);
     void    OnContextMenu(CWindow wnd, CPoint point);
     void    OnAdd(UINT, int, HWND);
     void    OnAddAll(UINT, int, HWND);
+    void    OnReconcile(UINT, int, HWND);
     void    OnPlay(UINT, int, HWND);
     void    OnRefresh(UINT, int, HWND);
     void    OnSearchChanged(UINT, int, HWND);
@@ -147,17 +175,20 @@ private:
         std::vector<std::shared_ptr<NavidromeNode>>& out,
         std::size_t& failedItems,
         const std::shared_ptr<std::atomic_bool>& cancel);
-    std::size_t enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> songs, bool play);
+    PlaylistAppendReceipt enqueueNodes(
+        std::vector<std::shared_ptr<NavidromeNode>> songs, bool play);
+    bool rollbackAppend(const PlaylistAppendReceipt& receipt);
     std::vector<std::shared_ptr<NavidromeNode>> selectedNodes();
     void    queueSelected(bool play, bool closeAfter);
     void    queueNodes(std::vector<std::shared_ptr<NavidromeNode>> roots,
                        bool play, bool closeAfter, bool reportRootProgress);
+    void    importLibrary(bool forceFull);
     void    updateActionState();
     void    setStatus(const std::string& msg);
 
     CTreeViewCtrl m_tree;
     CEdit         m_search;
-    CButton       m_addBtn, m_addAllBtn, m_playBtn, m_refreshBtn;
+    CButton       m_addBtn, m_addAllBtn, m_reconcileBtn, m_playBtn, m_refreshBtn;
     CStatic       m_status;
 
     // True when hosted inline in the prefs page (vs. the standalone window);

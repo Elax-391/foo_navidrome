@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "SubsonicClientWin.h"
 #include "Localization.h"
+#include <algorithm>
 #include <SDK/cfg_var.h>
 
 #pragma comment(lib, "winhttp.lib")
@@ -128,6 +129,30 @@ static double jdbl(const std::string& s, const std::string& key, double def = 0.
     return (end == s.c_str() + p) ? def : v;
 }
 
+static bool jbool(const std::string& s, const std::string& key, bool def = false) {
+    auto k = "\"" + key + "\":";
+    auto p = s.find(k);
+    if (p == std::string::npos) return def;
+    p += k.size();
+    while (p < s.size() && s[p] == ' ') ++p;
+    if (s.compare(p, 4, "true") == 0) return true;
+    if (s.compare(p, 5, "false") == 0) return false;
+    return def;
+}
+
+static std::string jscalar(const std::string& s, const std::string& key) {
+    auto quoted = jstr(s, key);
+    if (!quoted.empty()) return quoted;
+    auto k = "\"" + key + "\":";
+    auto p = s.find(k);
+    if (p == std::string::npos) return {};
+    p += k.size();
+    while (p < s.size() && s[p] == ' ') ++p;
+    auto end = p;
+    while (end < s.size() && s[end] != ',' && s[end] != '}') ++end;
+    return s.substr(p, end - p);
+}
+
 // Extract array of JSON objects for "key":[{...},{...}]
 // Also handles single-object case "key":{...}
 static std::vector<std::string> jarr(const std::string& s, const std::string& key) {
@@ -207,20 +232,44 @@ bool navidrome::SubsonicClientWin::isConfigured() const {
            cfg_password.get().length()   > 0;
 }
 
-std::string navidrome::SubsonicClientWin::authParams() const {
-    std::string user = cfg_username.get().c_str();
-    std::string pass = cfg_password.get().c_str();
-    std::string salt = cfg_salt.get().length() > 0 ? cfg_salt.get().c_str() : "fb2k_navidrome";
-    std::string token = md5hex(pass + salt);
-    return "u=" + urlEncode(user) + "&t=" + token + "&s=" + salt +
+static bool indicatesUnsupportedSearch(const std::string& error) {
+    std::string value = error;
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value.find("404") != std::string::npos ||
+           value.find("not found") != std::string::npos ||
+           value.find("unknown endpoint") != std::string::npos ||
+           value.find("unknown method") != std::string::npos ||
+           value.find("not implemented") != std::string::npos ||
+           value.find("unsupported") != std::string::npos;
+}
+
+navidrome::SubsonicRequestContext navidrome::SubsonicClientWin::snapshot() const {
+    SubsonicRequestContext context;
+    context.serverUrl = cfg_server_url.get().c_str();
+    context.username = cfg_username.get().c_str();
+    context.password = cfg_password.get().c_str();
+    context.salt = cfg_salt.get().length() > 0
+        ? cfg_salt.get().c_str() : "fb2k_navidrome";
+    context.customHeaders = cfg_custom_headers.get().c_str();
+    return context;
+}
+
+std::string navidrome::SubsonicClientWin::authParams(
+        const SubsonicRequestContext& context) const {
+    std::string token = md5hex(context.password + context.salt);
+    return "u=" + urlEncode(context.username) + "&t=" + token +
+           "&s=" + urlEncode(context.salt) +
            "&v=1.16.1&c=foo_navidrome&f=json";
 }
 
-std::string navidrome::SubsonicClientWin::buildURL(const std::string& endpoint,
-                                                    const std::string& extra) const {
-    std::string base = cfg_server_url.get().c_str();
+std::string navidrome::SubsonicClientWin::buildURL(
+        const SubsonicRequestContext& context, const std::string& endpoint,
+        const std::string& extra) const {
+    std::string base = context.serverUrl;
     while (!base.empty() && base.back() == '/') base.pop_back();
-    std::string url = base + "/rest/" + endpoint + "?" + authParams();
+    std::string url = base + "/rest/" + endpoint + "?" + authParams(context);
     if (!extra.empty()) url += "&" + extra;
     return url;
 }
@@ -238,8 +287,9 @@ std::wstring navidrome::SubsonicClientWin::customHeadersWide() {
     return joined.empty() ? std::wstring() : toWide(joined);
 }
 
-std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
-                                                   std::string& outError) const {
+std::string navidrome::SubsonicClientWin::httpGet(
+        const SubsonicRequestContext& context, const std::string& urlStr,
+        std::string& outError) const {
     std::wstring wurl = toWide(urlStr);
 
     URL_COMPONENTS uc = {};
@@ -267,8 +317,15 @@ std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
         nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
 
     std::string result;
-    if (hReq) {
-        std::wstring hdrs = customHeadersWide();
+    if (!hReq) {
+        outError = navidrome::l10n::requestError(GetLastError());
+    } else {
+        std::string joined;
+        for (const auto& line : navidrome::parseHeaderLines(context.customHeaders)) {
+            if (!joined.empty()) joined += "\r\n";
+            joined += line;
+        }
+        std::wstring hdrs = joined.empty() ? std::wstring() : toWide(joined);
         if (!hdrs.empty())
             WinHttpAddRequestHeaders(hReq, hdrs.c_str(), (DWORD)-1,
                 WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
@@ -300,14 +357,108 @@ std::string navidrome::SubsonicClientWin::httpGet(const std::string& urlStr,
 }
 
 bool navidrome::SubsonicClientWin::ping(std::string& outError) {
-    std::string body = httpGet(buildURL("ping.view"), outError);
+    return ping(snapshot(), outError);
+}
+
+bool navidrome::SubsonicClientWin::ping(
+        const SubsonicRequestContext& context, std::string& outError) {
+    std::string body = httpGet(context, buildURL(context, "ping.view"), outError);
     if (body.empty()) return false;
     auto root = checkResponse(body, outError);
     return !root.empty();
 }
 
+navidrome::ServerInfo navidrome::SubsonicClientWin::getServerInfo(
+        const SubsonicRequestContext& context, std::string& outError) {
+    std::string body = httpGet(context, buildURL(context, "ping.view"), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+    ServerInfo result;
+    result.type = jstr(root, "type");
+    result.version = jstr(root, "serverVersion");
+    result.openSubsonic = jbool(root, "openSubsonic");
+    return result;
+}
+
+std::vector<navidrome::MusicFolder>
+navidrome::SubsonicClientWin::getMusicFolders(
+        const SubsonicRequestContext& context, std::string& outError) {
+    std::string body = httpGet(context,
+        buildURL(context, "getMusicFolders.view"), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+    std::vector<MusicFolder> result;
+    for (const auto& f : jarr(root, "musicFolder")) {
+        MusicFolder folder;
+        folder.id = jscalar(f, "id");
+        folder.name = jstr(f, "name");
+        if (!folder.id.empty()) result.push_back(std::move(folder));
+    }
+    return result;
+}
+
+navidrome::ScanStatus navidrome::SubsonicClientWin::getScanStatus(
+        const SubsonicRequestContext& context, std::string& outError) {
+    std::string body = httpGet(context,
+        buildURL(context, "getScanStatus.view"), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+    ScanStatus result;
+    auto objects = jarr(root, "scanStatus");
+    const std::string& source = objects.empty() ? root : objects.front();
+    result.scanning = jbool(source, "scanning");
+    result.lastScan = jscalar(source, "lastScan");
+    return result;
+}
+
+std::vector<navidrome::Song> navidrome::SubsonicClientWin::getSongsPage(
+        const SubsonicRequestContext& context, std::size_t offset,
+        std::size_t count, std::string& outError, bool* outUnsupported) {
+    if (outUnsupported) *outUnsupported = false;
+    std::string params = "query=&artistCount=0&albumCount=0&songCount=" +
+        std::to_string(count) + "&songOffset=" + std::to_string(offset);
+    std::string body = httpGet(context,
+        buildURL(context, "search3.view", params), outError);
+    if (body.empty()) {
+        if (outUnsupported) *outUnsupported = indicatesUnsupportedSearch(outError);
+        return {};
+    }
+    auto root = checkResponse(body, outError);
+    if (root.empty()) {
+        if (outUnsupported) *outUnsupported = indicatesUnsupportedSearch(outError);
+        return {};
+    }
+
+    std::vector<Song> result;
+    for (const auto& s : jarr(root, "song")) {
+        Song song;
+        song.id = jstr(s, "id");
+        song.title = jstr(s, "title", navidrome::l10n::unknownTitle);
+        song.artist = jstr(s, "artist");
+        song.artistId = jstr(s, "artistId");
+        song.album = jstr(s, "album");
+        song.albumId = jstr(s, "albumId");
+        song.coverArtId = jstr(s, "coverArt");
+        song.suffix = jstr(s, "suffix");
+        song.created = jstr(s, "created");
+        song.track = jint(s, "track");
+        song.year = jint(s, "year");
+        song.duration = jdbl(s, "duration");
+        result.push_back(std::move(song));
+    }
+    return result;
+}
+
 std::vector<navidrome::Artist> navidrome::SubsonicClientWin::getArtists(std::string& outError) {
-    std::string body = httpGet(buildURL("getArtists.view"), outError);
+    return getArtists(snapshot(), outError);
+}
+
+std::vector<navidrome::Artist> navidrome::SubsonicClientWin::getArtists(
+        const SubsonicRequestContext& context, std::string& outError) {
+    std::string body = httpGet(context, buildURL(context, "getArtists.view"), outError);
     if (body.empty()) return {};
     auto root = checkResponse(body, outError);
     if (root.empty()) return {};
@@ -329,7 +480,15 @@ std::vector<navidrome::Artist> navidrome::SubsonicClientWin::getArtists(std::str
 std::vector<navidrome::Album>
 navidrome::SubsonicClientWin::getAlbumsForArtist(const std::string& artistId,
                                                   std::string& outError) {
-    std::string body = httpGet(buildURL("getArtist.view", "id=" + urlEncode(artistId)), outError);
+    return getAlbumsForArtist(snapshot(), artistId, outError);
+}
+
+std::vector<navidrome::Album>
+navidrome::SubsonicClientWin::getAlbumsForArtist(
+        const SubsonicRequestContext& context, const std::string& artistId,
+        std::string& outError) {
+    std::string body = httpGet(context,
+        buildURL(context, "getArtist.view", "id=" + urlEncode(artistId)), outError);
     if (body.empty()) return {};
     auto root = checkResponse(body, outError);
     if (root.empty()) return {};
@@ -352,7 +511,15 @@ navidrome::SubsonicClientWin::getAlbumsForArtist(const std::string& artistId,
 std::vector<navidrome::Song>
 navidrome::SubsonicClientWin::getSongsForAlbum(const std::string& albumId,
                                                 std::string& outError) {
-    std::string body = httpGet(buildURL("getAlbum.view", "id=" + urlEncode(albumId)), outError);
+    return getSongsForAlbum(snapshot(), albumId, outError);
+}
+
+std::vector<navidrome::Song>
+navidrome::SubsonicClientWin::getSongsForAlbum(
+        const SubsonicRequestContext& context, const std::string& albumId,
+        std::string& outError) {
+    std::string body = httpGet(context,
+        buildURL(context, "getAlbum.view", "id=" + urlEncode(albumId)), outError);
     if (body.empty()) return {};
     auto root = checkResponse(body, outError);
     if (root.empty()) return {};
@@ -368,6 +535,7 @@ navidrome::SubsonicClientWin::getSongsForAlbum(const std::string& albumId,
         so.albumId    = jstr(s, "albumId", albumId);
         so.coverArtId = jstr(s, "coverArt");
         so.suffix     = jstr(s, "suffix");
+        so.created    = jstr(s, "created");
         so.track      = jint(s, "track");
         so.year       = jint(s, "year");
         so.duration   = jdbl(s, "duration");
@@ -380,7 +548,8 @@ navidrome::SearchResults
 navidrome::SubsonicClientWin::search(const std::string& query, std::string& outError) {
     std::string params = "query=" + urlEncode(query) +
                          "&artistCount=20&albumCount=20&songCount=50";
-    std::string body = httpGet(buildURL("search3.view", params), outError);
+    auto context = snapshot();
+    std::string body = httpGet(context, buildURL(context, "search3.view", params), outError);
     if (body.empty()) return {};
     auto root = checkResponse(body, outError);
     if (root.empty()) return {};
@@ -406,11 +575,13 @@ navidrome::SubsonicClientWin::search(const std::string& query, std::string& outE
 }
 
 std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
-    return buildURL("stream.view", "id=" + urlEncode(songId));
+    auto context = snapshot();
+    return buildURL(context, "stream.view", "id=" + urlEncode(songId));
 }
 
 std::string navidrome::SubsonicClientWin::coverArtURL(const std::string& id, int size) {
     std::string extra = "id=" + urlEncode(id);
     if (size > 0) extra += "&size=" + std::to_string(size);
-    return buildURL("getCoverArt.view", extra);
+    auto context = snapshot();
+    return buildURL(context, "getCoverArt.view", extra);
 }

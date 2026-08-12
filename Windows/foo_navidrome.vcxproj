@@ -153,6 +153,13 @@
     <ClCompile Include="NavidromePluginWin.cpp" />
     <ClCompile Include="NavidromeInputWin.cpp" />
     <ClCompile Include="BrowserWindow.cpp" />
+    <ClCompile Include="LibraryImportState.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="LibraryImportLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="LibraryImporter.cpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -162,6 +169,9 @@
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />
     <ClInclude Include="Localization.h" />
+    <ClInclude Include="LibraryImportState.h" />
+    <ClInclude Include="LibraryImportLogic.h" />
+    <ClInclude Include="LibraryImporter.h" />
   </ItemGroup>
 
   <!-- SDK project references (adjust paths if your SDK layout differs) -->

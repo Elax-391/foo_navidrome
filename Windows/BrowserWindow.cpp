@@ -1,8 +1,10 @@
 #include "stdafx.h"
 #include "BrowserWindow.h"
+#include "LibraryImportLogic.h"
 #include "Localization.h"
 #include "SubsonicClientWin.h"
 #include "NavidromeInputWin.h"
+#include "LibraryImporter.h"
 #include <SDK/playlist.h>
 #include <SDK/metadb.h>
 #include <SDK/playable_location.h>
@@ -14,15 +16,30 @@
 namespace {
 
 template<typename Payload>
+class DeferredPayloadOwner {
+public:
+    explicit DeferredPayloadOwner(Payload* payload) : m_payload(payload) {}
+    ~DeferredPayloadOwner() { delete m_payload; }
+    Payload* release() {
+        auto* payload = m_payload;
+        m_payload = nullptr;
+        return payload;
+    }
+
+private:
+    Payload* m_payload = nullptr;
+};
+
+template<typename Payload>
 void dispatchBrowserPayload(const std::shared_ptr<BrowserDispatchState>& dispatch,
                             UINT message, Payload* payload) {
-    fb2k::inMainThread([dispatch, message, payload]() {
+    auto owner = std::make_shared<DeferredPayloadOwner<Payload>>(payload);
+    fb2k::inMainThread([dispatch, message, owner]() {
         if (!dispatch || !dispatch->alive || !::IsWindow(dispatch->hwnd)) {
-            delete payload;
             return;
         }
         ::SendMessage(dispatch->hwnd, message,
-                      reinterpret_cast<WPARAM>(payload), 0);
+                      reinterpret_cast<WPARAM>(owner->release()), 0);
     });
 }
 
@@ -109,6 +126,10 @@ LRESULT BrowserWindow::OnCreate(LPCREATESTRUCT) {
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_ADD_ALL);
     m_addAllBtn.SetFont(hFont);
 
+    m_reconcileBtn.Create(*this, CWindow::rcDefault, navidrome::l10n::reconcileLibrary,
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_RECONCILE);
+    m_reconcileBtn.SetFont(hFont);
+
     m_playBtn.Create(*this, CWindow::rcDefault, navidrome::l10n::playNow,
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, IDC_PLAY);
     m_playBtn.SetFont(hFont);
@@ -174,19 +195,21 @@ LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
         SWP_NOZORDER);
 
     const int btnY = h > pad + btnH ? h - pad - btnH : 0;
-    const int desiredRefreshW = 56, desiredAddAllW = 88;
+    const int desiredRefreshW = 56, desiredAddAllW = 88, desiredReconcileW = 88;
     const int desiredAddW = 168, desiredPlayW = 96;
-    const int desiredButtonsW = desiredRefreshW + desiredAddAllW +
+    const int desiredButtonsW = desiredRefreshW + desiredAddAllW + desiredReconcileW +
         desiredAddW + desiredPlayW;
-    const int availableRowW = w > 6 * pad ? w - 6 * pad : 0;
+    const int availableRowW = w > 7 * pad ? w - 7 * pad : 0;
     const bool compact = availableRowW < desiredButtonsW;
     const int refreshW = compact ? availableRowW * desiredRefreshW / desiredButtonsW
                                  : desiredRefreshW;
     const int addAllW = compact ? availableRowW * desiredAddAllW / desiredButtonsW
                                 : desiredAddAllW;
+    const int reconcileW = compact ? availableRowW * desiredReconcileW / desiredButtonsW
+                                   : desiredReconcileW;
     const int addW = compact ? availableRowW * desiredAddW / desiredButtonsW
                              : desiredAddW;
-    const int allocatedW = refreshW + addAllW + addW;
+    const int allocatedW = refreshW + addAllW + reconcileW + addW;
     const int playW = compact ? (availableRowW > allocatedW
                                     ? availableRowW - allocatedW : 0)
                                : desiredPlayW;
@@ -198,7 +221,9 @@ LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
         statusX, btnY + 4, statusW, btnH, SWP_NOZORDER);
     const int addAllX = statusX + statusW + pad;
     m_addAllBtn.SetWindowPos(nullptr, addAllX, btnY, addAllW, btnH, SWP_NOZORDER);
-    const int addX = addAllX + addAllW + pad;
+    const int reconcileX = addAllX + addAllW + pad;
+    m_reconcileBtn.SetWindowPos(nullptr, reconcileX, btnY, reconcileW, btnH, SWP_NOZORDER);
+    const int addX = reconcileX + reconcileW + pad;
     m_addBtn.SetWindowPos(nullptr, addX, btnY, addW, btnH, SWP_NOZORDER);
     m_playBtn.SetWindowPos(nullptr, addX + addW + pad, btnY, playW, btnH, SWP_NOZORDER);
     return 0;
@@ -560,13 +585,117 @@ void BrowserWindow::queueNodes(
 
 void BrowserWindow::OnAdd(UINT, int, HWND)  { queueSelected(false, false); }
 void BrowserWindow::OnAddAll(UINT, int, HWND) {
-    if (m_libraryRoots.empty()) {
+    importLibrary(false);
+}
+void BrowserWindow::OnReconcile(UINT, int, HWND) { importLibrary(true); }
+void BrowserWindow::OnPlay(UINT, int, HWND) { queueSelected(true,  false); }
+
+void BrowserWindow::importLibrary(bool forceFull) {
+    if (m_queueInProgress) {
+        setStatus(navidrome::l10n::queueBusy);
+        return;
+    }
+    auto context = navidrome::SubsonicClientWin::get().snapshot();
+    if (context.serverUrl.empty() || context.username.empty() || context.password.empty()) {
         setStatus(navidrome::l10n::libraryNotLoaded);
         return;
     }
-    queueNodes(m_libraryRoots, false, false, true);
+    m_queueInProgress = true;
+    const std::uint64_t operationId = ++m_queueOperationId;
+    m_queueCancel = std::make_shared<std::atomic_bool>(false);
+    auto cancel = m_queueCancel;
+    auto dispatch = m_dispatchState;
+    updateActionState();
+    setStatus(forceFull ? navidrome::l10n::reconcilingLibrary
+                        : navidrome::l10n::checkingNewTracks);
+
+    std::thread([dispatch, cancel, context = std::move(context),
+                 operationId, forceFull]() mutable {
+        auto progress = [dispatch, operationId](
+                const navidrome::LibraryImportProgress& info) {
+            auto* payload = new LibraryProgressPayload{};
+            payload->operationId = operationId;
+            payload->progress = info;
+            dispatchBrowserPayload(dispatch, WM_NAVIDROME_LIBRARY_PROGRESS, payload);
+        };
+        auto* complete = new LibraryCompletePayload{};
+        complete->operationId = operationId;
+        complete->result = navidrome::runLibraryImport(
+            context, forceFull, operationId, cancel, progress);
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_LIBRARY_COMPLETE, complete);
+    }).detach();
 }
-void BrowserWindow::OnPlay(UINT, int, HWND) { queueSelected(true,  false); }
+
+LRESULT BrowserWindow::OnLibraryProgress(UINT, WPARAM wParam, LPARAM, BOOL&) {
+    std::unique_ptr<LibraryProgressPayload> payload(
+        reinterpret_cast<LibraryProgressPayload*>(wParam));
+    if (!m_queueInProgress || payload->operationId != m_queueOperationId) return 0;
+    const auto& info = payload->progress;
+    setStatus(info.recursive
+        ? navidrome::l10n::importProgress(
+            info.completed, info.total, info.scanned, info.failed)
+        : navidrome::l10n::pageProgress(info.scanned, info.added));
+    return 0;
+}
+
+LRESULT BrowserWindow::OnLibraryComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
+    std::unique_ptr<LibraryCompletePayload> payload(
+        reinterpret_cast<LibraryCompletePayload*>(wParam));
+    if (!m_queueInProgress || payload->operationId != m_queueOperationId) return 0;
+    m_queueInProgress = false;
+    m_queueCancel.reset();
+    updateActionState();
+    auto& result = payload->result;
+    if (result.cancelled) return 0;
+    if (!result.error.empty() || !result.preparedState) {
+        setStatus(navidrome::l10n::error(result.error.empty()
+            ? navidrome::l10n::stateNotPrepared : result.error));
+        return 0;
+    }
+
+    std::vector<std::shared_ptr<NavidromeNode>> nodes;
+    nodes.reserve(result.candidates.size());
+    for (const auto& song : result.candidates) {
+        auto node = std::make_shared<NavidromeNode>();
+        node->type = NavidromeNode::Song;
+        node->id = song.id;
+        node->displayName = song.title;
+        node->subtitle = song.artist;
+        node->album = song.album;
+        node->coverArtId = song.coverArtId;
+        node->suffix = song.suffix;
+        node->track = song.track;
+        node->year = song.year;
+        node->duration = song.duration;
+        node->childrenLoaded = true;
+        nodes.push_back(std::move(node));
+    }
+    PlaylistAppendReceipt receipt;
+    if (!nodes.empty()) {
+        receipt = enqueueNodes(std::move(nodes), false);
+        if (!receipt.success || receipt.count != result.candidates.size()) {
+            if (receipt.success) rollbackAppend(receipt);
+            setStatus(navidrome::l10n::noSongsFound);
+            return 0;
+        }
+    }
+
+    auto commitResult = navidrome::commitWithPlaylistCompensation(
+        receipt.count != 0,
+        [&result](std::string& error) {
+            return result.preparedState->commit(error);
+        },
+        [this, &receipt]() { return rollbackAppend(receipt); });
+    if (!commitResult.committed) {
+        setStatus(commitResult.rolledBack
+            ? navidrome::l10n::stateCommitRolledBack(commitResult.error)
+            : navidrome::l10n::stateRollbackFailed);
+        return 0;
+    }
+    setStatus(receipt.count == 0 ? navidrome::l10n::libraryUpToDate
+                                 : navidrome::l10n::addedTracks(receipt.count));
+    return 0;
+}
 
 LRESULT BrowserWindow::OnQueueProgress(UINT, WPARAM wParam, LPARAM, BOOL&) {
     std::unique_ptr<QueueProgressPayload> payload(
@@ -598,8 +727,9 @@ LRESULT BrowserWindow::OnQueueComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
         return 0;
     }
 
-    const std::size_t added = enqueueNodes(std::move(payload->songs), payload->play);
-    if (added == 0) {
+    const auto receipt = enqueueNodes(std::move(payload->songs), payload->play);
+    const std::size_t added = receipt.success ? receipt.count : 0;
+    if (!receipt.success || added == 0) {
         setStatus(payload->failedItems > 0
             ? navidrome::l10n::allItemsFailed(payload->failedItems)
             : navidrome::l10n::noSongsFound);
@@ -773,11 +903,12 @@ void BrowserWindow::collectSongsDeep(
 // ---------------------------------------------------------------------------
 // Enqueue to foobar2000 playlist (call from main thread)
 // ---------------------------------------------------------------------------
-std::size_t BrowserWindow::enqueueNodes(
+PlaylistAppendReceipt BrowserWindow::enqueueNodes(
         std::vector<std::shared_ptr<NavidromeNode>> songs, bool play) {
+    PlaylistAppendReceipt receipt;
     if (songs.empty()) {
         setStatus(navidrome::l10n::noSongsSelected);
-        return 0;
+        return receipt;
     }
 
     metadb_handle_list tracks;
@@ -812,7 +943,7 @@ std::size_t BrowserWindow::enqueueNodes(
 
     if (tracks.get_count() == 0) {
         setStatus(navidrome::l10n::noSongsFound);
-        return 0;
+        return receipt;
     }
 
     auto pm = playlist_manager::get();
@@ -822,7 +953,14 @@ std::size_t BrowserWindow::enqueueNodes(
         pl = pm->get_active_playlist();
     }
     t_size insertPos = pm->playlist_get_item_count(pl);
-    pm->playlist_add_items(pl, tracks, pfc::bit_array_false());
+    const t_size insertedAt = pm->playlist_insert_items(
+        pl, insertPos, tracks, pfc::bit_array_false());
+    if (insertedAt == pfc_infinite) return receipt;
+    receipt.playlist = pl;
+    receipt.insertPos = insertedAt;
+    receipt.count = tracks.get_count();
+    receipt.tracks = tracks;
+    receipt.success = true;
 
     if (play && tracks.get_count() > 0) {
         // Start playback honoring the user's Playback > Order setting (Shuffle,
@@ -832,12 +970,32 @@ std::size_t BrowserWindow::enqueueNodes(
         // that exact track and ignore the order.)
         pm->set_active_playlist(pl);
         pm->set_playing_playlist(pl);
-        pm->playlist_set_focus_item(pl, insertPos);
+        pm->playlist_set_focus_item(pl, insertedAt);
         playback_control::get()->start(playback_control::track_command_play);
     }
 
     setStatus(navidrome::l10n::addedTracks(tracks.get_count()));
-    return static_cast<std::size_t>(tracks.get_count());
+    return receipt;
+}
+
+bool BrowserWindow::rollbackAppend(const PlaylistAppendReceipt& receipt) {
+    if (!receipt.success || receipt.count == 0) return true;
+    auto pm = playlist_manager::get();
+    const t_size before = pm->playlist_get_item_count(receipt.playlist);
+    if (!navidrome::isValidAppendRange(
+            receipt.insertPos, receipt.count, before))
+        return false;
+    metadb_handle_list current;
+    pm->playlist_get_items(receipt.playlist, current,
+        pfc::bit_array_range(receipt.insertPos, receipt.count));
+    if (current.get_count() != receipt.tracks.get_count()) return false;
+    for (t_size i = 0; i < current.get_count(); ++i) {
+        if (current[i] != receipt.tracks[i]) return false;
+    }
+    if (!pm->playlist_remove_items(receipt.playlist,
+        pfc::bit_array_range(receipt.insertPos, receipt.count))) return false;
+    return navidrome::didRollbackRestoreCount(
+        before, pm->playlist_get_item_count(receipt.playlist), receipt.count);
 }
 
 void BrowserWindow::updateActionState() {
@@ -849,6 +1007,8 @@ void BrowserWindow::updateActionState() {
     if (m_playBtn.IsWindow()) m_playBtn.EnableWindow(idle);
     if (m_addAllBtn.IsWindow())
         m_addAllBtn.EnableWindow(idle && !m_libraryRoots.empty());
+    if (m_reconcileBtn.IsWindow())
+        m_reconcileBtn.EnableWindow(idle && !m_libraryRoots.empty());
 }
 
 void BrowserWindow::setStatus(const std::string& msg) {
