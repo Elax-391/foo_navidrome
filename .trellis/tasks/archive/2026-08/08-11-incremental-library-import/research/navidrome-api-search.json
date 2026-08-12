@@ -1,0 +1,254 @@
+{
+  "ok": true,
+  "error_type": "",
+  "error": "",
+  "session_id": "edbcb96d752d",
+  "query": "site:navidrome.org OR site:github.com/navidrome/navidrome Subsonic API newest songs incremental library changes",
+  "platform": "",
+  "model": "grok-4.5",
+  "primary_api_mode": "chat-completions",
+  "content": "**Navidrome's Subsonic API supports `getNewestSongs` for newest songs and incremental library changes primarily through `getIndexes` (with `ifModifiedSince`) plus ETag-based caching.**\n\n### Subsonic API Overview in Navidrome\nNavidrome fully implements the [Subsonic API](https://www.subsonic.org/pages/api.jsp) (version 1.16+ as of recent releases). All endpoints are available at `/rest/`. The API is documented on the official site:\n\n- Subsonic reference: https://docs.navidrome.org/reference/subsonic-api/\n- Specific endpoints are covered in the online docs (you can browse by endpoint name).\n\nNavidrome's library scanner (based on `musicbrainz` metadata, ID3 tags, and file timestamps) populates the response data. Songs are considered \"newest\" based on the `added` timestamp from metadata (preferred) or file modification time.\n\n### `getNewestSongs` Endpoint\n**Endpoint:** `/rest/getNewestSongs.view`\n\n**Purpose:** Returns a paginated list of the most recently added songs (typically for \"On the Radio\" or \"New Music\" sections in clients).\n\n**Key parameters:**\n- `count` — Maximum number of songs to return (default 20, max 100).\n- `offset` — Pagination offset (default 0).\n- `newerThan` — Optional ISO-style filter: only songs added after this timestamp (format `YYYY-MM-DD HH:MM:SS`). This is the main way to make newest-song queries incremental.\n- `musicFolder` — Optional folder restriction.\n\n**Example response structure** (common Subsonic XML/JSON format):\n```xml\n<error code=\"40\" message=\"Required parameter missing.\"/>\n<!-- or success with <songs> containing <song> elements with id, title, artist, etc. -->\n```\n\n**How it ties to incremental changes:**  \nYou can combine it with a last-synced timestamp by setting `newerThan` to your previous sync time. Navidrome returns songs in reverse-chronological order of the `added` field. This is efficient for small \"newest\" lists but not suitable for full-library incremental syncs (which would return thousands of songs).\n\n### Incremental Library Changes – Primary Mechanism: `getIndexes`\n**Endpoint:** `/rest/getIndexes.view`\n\n**Purpose:** Returns a complete indexed view of artists → albums → songs. This is the standard way clients perform **incremental** library updates (avoiding full rescans).\n\n**Key parameter for incrementality:**\n- `ifModifiedSince` — Milliseconds since Unix epoch (1970-01-01). Only changed files (added, updated, or deleted) since this timestamp are returned. This is the recommended pattern for clients.\n\n**Additional support:**\n- `etag` — Navidrome sets ETag headers on responses. Clients can use `If-None-Match` for conditional caching (further reduces traffic).\n- `musicFolder` — Restrict to a folder.\n\n**Implementation pattern (client side):**\n1. Store the last `ifModifiedSince` value (or last ETag) from your previous sync.\n2. Call `getIndexes` with `ifModifiedSince` on a schedule (e.g., every few hours or on filesystem watch events).\n3. Merge the returned changed entries into your local cache/index.\n4. For newest songs specifically, after an incremental `getIndexes` call, you can optionally call `getNewestSongs` with `newerThan` set to the same timestamp to surface only the newest items since the last sync.\n\nThis approach is documented in Navidrome's Subsonic reference under both `getIndexes` and the general \"Subsonic API\" section. It significantly reduces bandwidth and processing for large libraries.\n\n### Additional Notes from Navidrome Code & Issues\n- Navidrome's library manager (`internal/server/scan` and metadata handling) updates the `added` and `updated` timestamps during scanning. Full scans are the default, but `--watch` (filesystem notification) and scheduled scans enable near-real-time incremental detection.\n- GitHub discussions (navidrome/navidrome) and the API implementation (in `internal/api` and `internal/subsonic`) confirm ETag and `ifModifiedSince` support. No major limitations noted for these endpoints in recent versions.\n- Clients (e.g., Subsonic-compatible Android/iOS apps, VLC, etc.) typically maintain a local SQLite or similar index and use the above two endpoints for syncs.\n\n### Recommended Reading (Direct from Navidrome)\n- Full Subsonic API docs: https://docs.navidrome.org/reference/subsonic-api/\n- `getIndexes` details: https://docs.navidrome.org/reference/subsonic-api/#getIndexes\n- `getNewestSongs` details: https://docs.navidrome.org/reference/subsonic-api/#getNewestSongs\n\nIf you need a sample client implementation, code snippets for a specific language, or help debugging a particular endpoint, provide more details!",
+  "sources": [
+    {
+      "url": "https://github.com/navidrome/navidrome/discussions/2452",
+      "provider": "tavily",
+      "title": "Custom libraries per user · navidrome/navidrome · Discussion #2452 · GitHub",
+      "description": "All reactions\n\n4 replies\n\n@deluan\n\nComment options\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n#### deluan Apr 4, 2026 Maintainer\n\n|  |\n\n| Hey, not sure what do you mean. What you are describing was implemented July last year, in version 0.58.0, and is documented here:   The Subsonic API provides multi-library support for (most) its endpoints, see the param `musicFolderId`.  Is there anything missing in Navidrome implementation? |\n\nAll reactions  \n\n ❤️ 1\n\n@hashhar\n\nComment options\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n#### hashhar Apr 10, 2026\n\n|  | [...] ### dweymouth Jul 25, 2023\n\n|  |\n\n| Multiple library support is on the roadmap but I think the plan there was to be able to assign specific music folders to different users, not have a dynamic library that users could choose from the \"back catalog\". What you're describing would be a cool feature but for now it can kind of be approximated by marking albums as favorites. Each user could then browse their favorite albums as their main portal, with the ability to search and play from the full library as well. It's not perfect since you can't apply sorting orders to your favorite albums (e.g. recently added, random), and you can't in most Subsonic clients either since the API only exposes sort orders on the main collection. |\n\nYou must be logged in to vote\n\nAll reactions\n\n0 replies [...] #### deluan Apr 10, 2026 Maintainer\n\n|  |\n\n| Navidrome does not \"overload\" its purpose: the `musicFolderId`, in Subsonic terms, is the `libraryId` in Navidrome, so this already works as expected. If other Subsonic servers do not implement it, that's on them to comply to the API. The spec is already there. We just need to extend it to a few endpoints (like getPlaylist/getPlaylists). See opensubsonic/open-subsonic-api#162 |\n\nAll reactions\n\n@hashhar\n\nComment options\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n#### hashhar Apr 11, 2026\n\n|  |"
+    },
+    {
+      "url": "https://github.com/navidrome/navidrome/discussions/4849",
+      "provider": "tavily",
+      "title": "Minimal Subsonic API for clients on constrained devices · navidrome/navidrome · Discussion #4849 · GitHub",
+      "description": "as defined by the Subsonic/OpenSubsonic API, so removing them from API responses is possible, and increases the number of songs that fit inside an HTTP request that the device can receive. A spike suggests this is at least 50 songs (possibly more, but that's acceptably high for a fitness device). |"
+    },
+    {
+      "url": "https://www.navidrome.org/docs/developers/subsonic-api",
+      "provider": "tavily",
+      "title": "Subsonic API Compatibility | Navidrome",
+      "description": "| System |\n\n| `ping` |\n| `getLicense` | Always valid ;) |\n\n| Browsing |\n\n| `getMusicFolders` | Returns all libraries accessible to the authenticated user |\n| `getIndexes` | Doesn’t support `shortcuts`, nor direct children |\n| `getMusicDirectory` |\n| `getSong` |\n| `getArtists` |\n| `getArtist` |\n| `getAlbum` |\n| `getGenres` |\n| `getArtistInfo` | Requires external integrations |\n| `getArtistInfo2` | Requires external integrations |\n| `getAlbumInfo` | Requires external integrations |\n| `getAlbumInfo2` | Requires external integrations |\n| `getTopSongs` | Requires Last.fm integration |\n| `getSimilarSongs` | Requires Last.fm integration |\n| `getSimilarSongs2` | Requires Last.fm integration |\n\n| Album/Songs Lists | [...] | Media Retrieval |\n\n| `stream` |\n| `download` | Accepts ids for Songs, Albums, Artists and Playlists. Also accepts transcoding options similar to `stream` |\n| `getCoverArt` |\n| `getLyrics` | Works with embedded lyrics and external files |\n| `getAvatar` | If Gravatar is enabled and the user has an email, returns a redirect to their Gravatar. Or else returns a placeholder |\n\n| Media Annotation |\n\n| `star` |\n| `unstar` |\n| `setRating` |\n| `scrobble` |\n\n| Bookmarks |\n\n| `getBookmarks` |\n| `createBookmark` |\n| `deleteBookmark` |\n| `getPlayQueue` | `current` is a string id, not `int` as it shows in the official Subsonic API documentation |\n| `savePlayQueue` |\n\n| Sharing (if `EnableSharing` is `true`) |\n\n| `getShares` |\n| `createShare` |\n| `updateShare` |\n| `deleteShare` |\n\n| Internet radio | [...] | Album/Songs Lists |\n\n| `getAlbumList` |\n| `getAlbumList2` |\n| `getStarred` |\n| `getStarred2` |\n| `getNowPlaying` |\n| `getRandomSongs` |\n| `getSongsByGenre` |\n\n| Searching |\n\n| `search2` | Doesn’t support Lucene queries, only simple auto complete queries |\n| `search3` | Doesn’t support Lucene queries, only simple auto complete queries |\n\n| Playlists |\n\n| `getPlaylists` | `username` parameter is not implemented |\n| `getPlaylist` |\n| `createPlaylist` |\n| `updatePlaylist` |\n| `deletePlaylist` |\n\n| Media Retrieval |"
+    },
+    {
+      "url": "context7:/websites/fevol_github_io_starlight-site-graph",
+      "title": "Starlight Site Graph",
+      "description": "A Starlight plugin that seamlessly adds a customizable graph to your site, visualizing page links for easy navigation.",
+      "provider": "context7"
+    },
+    {
+      "url": "https://www.subsonic.org/pages/apps.jsp",
+      "provider": "tavily",
+      "title": "Subsonic",
+      "description": "Access your entire music library from anywhere on your iPhone or iPod regardless of the size of your music collection.\n Play song formats that the iPhone/iPod will not normally play e.g. wma, flac, ogg.\n Caches all queued songs as quickly as possible once Wi-fi connection is detected.\n Browse and manage cached songs by artist/album. Delete entire artist/album from cache at once.\n Delete or change song priority on the Now Playing list while songs are playing.\n Double buffering: upcoming song starts to download before the currently playing song finishes.\n Seeking for fully cached songs.\n Load playlists stored on the Subsonic server.\n Multiple server configuration.\n Random playlist generation using entire song collection.\n Repeat/shuffle/skip songs. [...] Always have access to your entire music collection without the need for any third party server or subscription.\n Supports all popular formats (WMA, FLAC, MP3, AAC, OCG etc).\n Keep listening when you have no cellular coverage due to full local storage including cover art, lyrics and info.\n Manage your local stored music in a convenient way.\n Control the quality of the music by controlling the streaming bit-rate.\n Create playlists on the device which can contain songs from different servers simultaneously.\n Add easily your newest music, your recently played albums, or your frequently played albums.\n Add random albums.\n Full search support.\n Keep playing behind locked screen.\n Full integration with the Music and Video hub.\n Automatic storage management of local stored songs. [...] A Native Mac Application - designed on the Mac, for the Mac.\n Local Caching of Library Information, Audio, and Album Art - reduce bandwidth and get a more responsive experience.\n Browse Artists, Albums, and Songs.\n Quick Artist Filter - quickly narrow your results.\n Playlists - play, create, and delete Subsonic playlists.\n Search - find the song you're looking for quickly.\n Current Playlist Persistence - pickup right where you left off, even after a reboot.\n Mac Media Key Integration - previous, play/pause, and next key support.\n Keyboard Shortcuts - control volume, repeat, shuffle, etc. through keyboard shortcuts.\n Last.fm Integration - songs are scrobbled as they're played.\n Playback via QuickTime - if QuickTime can play it, so can Thumper."
+    }
+  ],
+  "sources_count": 5,
+  "primary_sources": [],
+  "primary_sources_count": 0,
+  "extra_sources": [
+    {
+      "url": "https://github.com/navidrome/navidrome/discussions/2452",
+      "provider": "tavily",
+      "title": "Custom libraries per user · navidrome/navidrome · Discussion #2452 · GitHub",
+      "description": "All reactions\n\n4 replies\n\n@deluan\n\nComment options\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n#### deluan Apr 4, 2026 Maintainer\n\n|  |\n\n| Hey, not sure what do you mean. What you are describing was implemented July last year, in version 0.58.0, and is documented here:   The Subsonic API provides multi-library support for (most) its endpoints, see the param `musicFolderId`.  Is there anything missing in Navidrome implementation? |\n\nAll reactions  \n\n ❤️ 1\n\n@hashhar\n\nComment options\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n#### hashhar Apr 10, 2026\n\n|  | [...] ### dweymouth Jul 25, 2023\n\n|  |\n\n| Multiple library support is on the roadmap but I think the plan there was to be able to assign specific music folders to different users, not have a dynamic library that users could choose from the \"back catalog\". What you're describing would be a cool feature but for now it can kind of be approximated by marking albums as favorites. Each user could then browse their favorite albums as their main portal, with the ability to search and play from the full library as well. It's not perfect since you can't apply sorting orders to your favorite albums (e.g. recently added, random), and you can't in most Subsonic clients either since the API only exposes sort orders on the main collection. |\n\nYou must be logged in to vote\n\nAll reactions\n\n0 replies [...] #### deluan Apr 10, 2026 Maintainer\n\n|  |\n\n| Navidrome does not \"overload\" its purpose: the `musicFolderId`, in Subsonic terms, is the `libraryId` in Navidrome, so this already works as expected. If other Subsonic servers do not implement it, that's on them to comply to the API. The spec is already there. We just need to extend it to a few endpoints (like getPlaylist/getPlaylists). See opensubsonic/open-subsonic-api#162 |\n\nAll reactions\n\n@hashhar\n\nComment options\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n#### hashhar Apr 11, 2026\n\n|  |"
+    },
+    {
+      "url": "https://github.com/navidrome/navidrome/discussions/4849",
+      "provider": "tavily",
+      "title": "Minimal Subsonic API for clients on constrained devices · navidrome/navidrome · Discussion #4849 · GitHub",
+      "description": "as defined by the Subsonic/OpenSubsonic API, so removing them from API responses is possible, and increases the number of songs that fit inside an HTTP request that the device can receive. A spike suggests this is at least 50 songs (possibly more, but that's acceptably high for a fitness device). |"
+    },
+    {
+      "url": "https://www.navidrome.org/docs/developers/subsonic-api",
+      "provider": "tavily",
+      "title": "Subsonic API Compatibility | Navidrome",
+      "description": "| System |\n\n| `ping` |\n| `getLicense` | Always valid ;) |\n\n| Browsing |\n\n| `getMusicFolders` | Returns all libraries accessible to the authenticated user |\n| `getIndexes` | Doesn’t support `shortcuts`, nor direct children |\n| `getMusicDirectory` |\n| `getSong` |\n| `getArtists` |\n| `getArtist` |\n| `getAlbum` |\n| `getGenres` |\n| `getArtistInfo` | Requires external integrations |\n| `getArtistInfo2` | Requires external integrations |\n| `getAlbumInfo` | Requires external integrations |\n| `getAlbumInfo2` | Requires external integrations |\n| `getTopSongs` | Requires Last.fm integration |\n| `getSimilarSongs` | Requires Last.fm integration |\n| `getSimilarSongs2` | Requires Last.fm integration |\n\n| Album/Songs Lists | [...] | Media Retrieval |\n\n| `stream` |\n| `download` | Accepts ids for Songs, Albums, Artists and Playlists. Also accepts transcoding options similar to `stream` |\n| `getCoverArt` |\n| `getLyrics` | Works with embedded lyrics and external files |\n| `getAvatar` | If Gravatar is enabled and the user has an email, returns a redirect to their Gravatar. Or else returns a placeholder |\n\n| Media Annotation |\n\n| `star` |\n| `unstar` |\n| `setRating` |\n| `scrobble` |\n\n| Bookmarks |\n\n| `getBookmarks` |\n| `createBookmark` |\n| `deleteBookmark` |\n| `getPlayQueue` | `current` is a string id, not `int` as it shows in the official Subsonic API documentation |\n| `savePlayQueue` |\n\n| Sharing (if `EnableSharing` is `true`) |\n\n| `getShares` |\n| `createShare` |\n| `updateShare` |\n| `deleteShare` |\n\n| Internet radio | [...] | Album/Songs Lists |\n\n| `getAlbumList` |\n| `getAlbumList2` |\n| `getStarred` |\n| `getStarred2` |\n| `getNowPlaying` |\n| `getRandomSongs` |\n| `getSongsByGenre` |\n\n| Searching |\n\n| `search2` | Doesn’t support Lucene queries, only simple auto complete queries |\n| `search3` | Doesn’t support Lucene queries, only simple auto complete queries |\n\n| Playlists |\n\n| `getPlaylists` | `username` parameter is not implemented |\n| `getPlaylist` |\n| `createPlaylist` |\n| `updatePlaylist` |\n| `deletePlaylist` |\n\n| Media Retrieval |"
+    },
+    {
+      "url": "context7:/websites/fevol_github_io_starlight-site-graph",
+      "title": "Starlight Site Graph",
+      "description": "A Starlight plugin that seamlessly adds a customizable graph to your site, visualizing page links for easy navigation.",
+      "provider": "context7"
+    },
+    {
+      "url": "https://www.subsonic.org/pages/apps.jsp",
+      "provider": "tavily",
+      "title": "Subsonic",
+      "description": "Access your entire music library from anywhere on your iPhone or iPod regardless of the size of your music collection.\n Play song formats that the iPhone/iPod will not normally play e.g. wma, flac, ogg.\n Caches all queued songs as quickly as possible once Wi-fi connection is detected.\n Browse and manage cached songs by artist/album. Delete entire artist/album from cache at once.\n Delete or change song priority on the Now Playing list while songs are playing.\n Double buffering: upcoming song starts to download before the currently playing song finishes.\n Seeking for fully cached songs.\n Load playlists stored on the Subsonic server.\n Multiple server configuration.\n Random playlist generation using entire song collection.\n Repeat/shuffle/skip songs. [...] Always have access to your entire music collection without the need for any third party server or subscription.\n Supports all popular formats (WMA, FLAC, MP3, AAC, OCG etc).\n Keep listening when you have no cellular coverage due to full local storage including cover art, lyrics and info.\n Manage your local stored music in a convenient way.\n Control the quality of the music by controlling the streaming bit-rate.\n Create playlists on the device which can contain songs from different servers simultaneously.\n Add easily your newest music, your recently played albums, or your frequently played albums.\n Add random albums.\n Full search support.\n Keep playing behind locked screen.\n Full integration with the Music and Video hub.\n Automatic storage management of local stored songs. [...] A Native Mac Application - designed on the Mac, for the Mac.\n Local Caching of Library Information, Audio, and Album Art - reduce bandwidth and get a more responsive experience.\n Browse Artists, Albums, and Songs.\n Quick Artist Filter - quickly narrow your results.\n Playlists - play, create, and delete Subsonic playlists.\n Search - find the song you're looking for quickly.\n Current Playlist Persistence - pickup right where you left off, even after a reboot.\n Mac Media Key Integration - previous, play/pause, and next key support.\n Keyboard Shortcuts - control volume, repeat, shuffle, etc. through keyboard shortcuts.\n Last.fm Integration - songs are scrobbled as they're played.\n Playback via QuickTime - if QuickTime can play it, so can Thumper."
+    }
+  ],
+  "extra_sources_count": 5,
+  "source_warning": "extra_sources are retrieved in parallel and are not automatically used to verify generated content; use fetch on key URLs for claim-level evidence.",
+  "routing_decision": {
+    "docs_intent": true,
+    "zh_current_intent": false,
+    "web_current_intent": false,
+    "fetch_intent": false,
+    "supplemental_paths": [
+      "docs_search",
+      "web_search",
+      "vertical_search"
+    ],
+    "intent_router_mode": "hybrid",
+    "required_capabilities": [
+      "docs_search",
+      "web_search",
+      "vertical_search"
+    ],
+    "intent_signals": {
+      "docs_api_intent": true,
+      "current_or_locale_intent": false,
+      "known_url": false,
+      "vertical_intent": true,
+      "strict_validation": true,
+      "rule_scores": {
+        "docs_search": 0.82,
+        "web_search": 0.72,
+        "vertical_search": 0.72
+      },
+      "urls": []
+    },
+    "confidence": 0.82,
+    "router_engines_used": [
+      "rules"
+    ],
+    "degraded": true,
+    "degraded_reason": "embeddings not configured; classifier not configured",
+    "reasons": [
+      "rules matched docs/API/library terms",
+      "strict validation requires source reinforcement",
+      "rules matched vertical-domain terms"
+    ],
+    "validation_level": "strict",
+    "fallback_mode": "auto",
+    "providers": "auto",
+    "main_search_chain": [
+      "openai-compatible"
+    ],
+    "openai_compatible_stream": false,
+    "openai_compatible_models": [
+      "grok-4.5"
+    ],
+    "openai_compatible_model_fallback_enabled": false
+  },
+  "providers_used": [
+    "OpenAI-compatible",
+    "tavily",
+    "context7"
+  ],
+  "provider_attempts": [
+    {
+      "capability": "main_search",
+      "provider": "OpenAI-compatible",
+      "status": "ok",
+      "error_type": "",
+      "error": "",
+      "elapsed_ms": 48859.3,
+      "result_count": 1,
+      "transport": "non_stream",
+      "model": "grok-4.5"
+    },
+    {
+      "capability": "web_search",
+      "provider": "tavily",
+      "status": "ok",
+      "error_type": "",
+      "error": "",
+      "elapsed_ms": 6251.04,
+      "result_count": 3
+    },
+    {
+      "capability": "docs_search",
+      "provider": "context7",
+      "status": "ok",
+      "error_type": "",
+      "error": "",
+      "elapsed_ms": 8475.88,
+      "result_count": 1
+    },
+    {
+      "capability": "web_search",
+      "provider": "zhipu",
+      "status": "error",
+      "error_type": "rate_limited",
+      "error": "HTTP 429: {\"error\":{\"code\":\"1113\",\"message\":\"余额不足或无可用资源包,请充值。\"}}",
+      "elapsed_ms": 1892.23,
+      "result_count": 0
+    },
+    {
+      "capability": "web_search",
+      "provider": "tavily",
+      "status": "ok",
+      "error_type": "",
+      "error": "",
+      "elapsed_ms": 6174.39,
+      "result_count": 3
+    }
+  ],
+  "fallback_used": true,
+  "transport_fallback_used": false,
+  "model_fallback_used": false,
+  "validation_level": "strict",
+  "minimum_profile_ok": true,
+  "capability_status": {
+    "main_search": {
+      "configured": [
+        "openai-compatible"
+      ],
+      "fallback_chain": [
+        "xai-responses",
+        "openai-compatible"
+      ],
+      "ok": true
+    },
+    "web_search": {
+      "configured": [
+        "zhipu",
+        "tavily"
+      ],
+      "fallback_chain": [
+        "zhipu",
+        "zhipu-mcp",
+        "tavily",
+        "firecrawl"
+      ],
+      "ok": true
+    },
+    "docs_search": {
+      "configured": [
+        "context7"
+      ],
+      "fallback_chain": [
+        "context7",
+        "exa"
+      ],
+      "ok": true
+    },
+    "web_fetch": {
+      "configured": [
+        "tavily"
+      ],
+      "fallback_chain": [
+        "tavily",
+        "jina",
+        "zhipu-mcp-reader",
+        "firecrawl"
+      ],
+      "ok": true
+    },
+    "vertical_search": {
+      "configured": [],
+      "fallback_chain": [
+        "anysearch"
+      ],
+      "experimental": true,
+      "explicit_only": [
+        "sciverse"
+      ],
+      "route_enabled": {
+        "anysearch": true,
+        "sciverse": false
+      },
+      "ok": false
+    }
+  },
+  "elapsed_ms": 71673.81
+}

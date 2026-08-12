@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/08-11-incremental-library-import/prd.md","reason":"Verify every observable requirement and AC1-AC18, especially no duplicate append, old-album additions, scan consistency, multi-window locking, rollback, and RAII cleanup."}
+{"file":".trellis/tasks/08-11-incremental-library-import/research/incremental-api-and-storage.md","reason":"Challenge any claim that OpenSubsonic provides a change cursor and verify the implementation stays within the documented Navidrome ordering assumption."}
+{"file":".trellis/tasks/archive/2026-08/08-11-windows-zh-localization/research/sdk-build.md","reason":"Verify the final Windows Release x64 rebuild and package against the previously proven SDK/ATL/WTL environment."}
+{"file":".trellis/spec/frontend/windows-localization.md","reason":"Audit centralized Chinese strings, safe five-button layout, strict UTF-8, vcxproj registration, and Windows artifact checks."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace configuration snapshot to API pages to state staging to main-thread playlist append to atomic state commit, including all error branches."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that ordinary queue actions and library import share conversion, lifecycle, and playlist-writing owners without divergent copies."}

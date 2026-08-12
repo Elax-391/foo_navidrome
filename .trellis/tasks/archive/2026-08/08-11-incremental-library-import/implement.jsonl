@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/08-11-incremental-library-import/prd.md","reason":"Implement the approved fast-tail mode, exact song-ID semantics, automatic reconciliation, compensating completion, compatibility scope, and AC1-AC18."}
+{"file":".trellis/tasks/08-11-incremental-library-import/research/incremental-api-and-storage.md","reason":"Use the verified OpenSubsonic and Navidrome API constraints, current rowid paging behavior, WinHTTP concurrency evidence, and profile storage guidance."}
+{"file":".trellis/tasks/archive/2026-08/08-11-windows-zh-localization/research/sdk-build.md","reason":"Reuse the known-good foobar2000 SDK sibling layout, v145 toolset override, ATL/WTL setup, and Windows x64 artifact checks."}
+{"file":".trellis/spec/frontend/windows-localization.md","reason":"Keep new Windows text centralized, UTF-8 encoded, layout-safe, and covered by the established x64 build contract."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Maintain explicit contracts across Subsonic payloads, request snapshots, persistent state, background workers, UI messages, and playlist mutation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing node conversion, queue lifecycle, cancellation, and playlist writer instead of duplicating behavior."}
