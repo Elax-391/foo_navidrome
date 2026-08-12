@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-08-11
+- **Total Sessions**: 3
+- **Last Active**: 2026-08-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~50 | Active |
+| `journal-1.md` | ~72 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-08-12 | Windows incremental library import | `4751efdb4221829bc2c6c9cde7d9671fcd004da5`, `ad46d807d58db7ad5c7320a111adb37839aecf52` | `main` |
 | 2 | 2026-08-11 | Windows full-library playlist import | `5ae5352` | `main` |
 | 1 | 2026-08-11 | Windows 中文界面与 x64 DLL 构建 | `15102dd`, `887e6e2` | `main` |
 <!-- @@@/auto:session-history -->

@@ -48,3 +48,25 @@ Added a Windows 添加全部 command that imports the complete Navidrome library
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Windows incremental library import
+
+**Date**: 2026-08-12
+**Task**: Windows incremental library import
+**Branch**: `main`
+
+### Summary
+
+Added fast Navidrome tail import, full reconciliation, exact persistent song-ID state, transactional playlist compensation, deterministic Windows tests, and verified x64 delivery.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4751efdb4221829bc2c6c9cde7d9671fcd004da5` | (see git log) |
+| `ad46d807d58db7ad5c7320a111adb37839aecf52` | (see git log) |
+
+### Status
+
+[OK] **Completed**
