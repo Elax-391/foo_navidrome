@@ -131,6 +131,29 @@ LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
+// Smart-list roots, shown above the artist list. They expand lazily like any
+// other node, so opening the browser still costs exactly one getArtists call.
+static std::vector<std::shared_ptr<NavidromeNode>> buildCategoryNodes() {
+    struct { NavidromeNode::CategoryKind kind; const char* title; } kCategories[] = {
+        { NavidromeNode::CatStarred,        "\u2605 Starred"   },
+        { NavidromeNode::CatRecentlyAdded,  "Recently Added"   },
+        { NavidromeNode::CatMostPlayed,     "Most Played"      },
+        { NavidromeNode::CatRecentlyPlayed, "Recently Played"  },
+        { NavidromeNode::CatRandom,         "Random Albums"    },
+        { NavidromeNode::CatPlaylists,      "Playlists"        },
+    };
+
+    std::vector<std::shared_ptr<NavidromeNode>> out;
+    for (const auto& c : kCategories) {
+        auto n = std::make_shared<NavidromeNode>();
+        n->type        = NavidromeNode::Category;
+        n->category    = c.kind;
+        n->displayName = c.title;
+        out.push_back(n);
+    }
+    return out;
+}
+
 void BrowserWindow::loadArtists() {
     setStatus("Loading artists\u2026");
     m_tree.DeleteAllItems();
@@ -142,16 +165,99 @@ void BrowserWindow::loadArtists() {
         std::string err;
         auto artists = navidrome::SubsonicClientWin::get().getArtists(err);
         payload->error = err;
+        if (err.empty()) {
+            for (auto& n : buildCategoryNodes()) payload->nodes.push_back(n);
+        }
         for (auto& a : artists) {
             auto n = std::make_shared<NavidromeNode>();
             n->type        = NavidromeNode::Artist;
             n->id          = a.id;
             n->displayName = a.name;
             n->coverArtId  = a.coverArtId;
+            n->starred     = a.starred;
             payload->nodes.push_back(n);
         }
         PostMessage(WM_NAVIDROME_LOADED, reinterpret_cast<WPARAM>(payload), 0);
     }).detach();
+}
+
+// ---------------------------------------------------------------------------
+// Child fetch (synchronous \u2014 background thread only)
+// ---------------------------------------------------------------------------
+std::vector<std::shared_ptr<NavidromeNode>>
+BrowserWindow::fetchChildren(const std::shared_ptr<NavidromeNode>& node,
+                             std::string& outError) {
+    auto& client = navidrome::SubsonicClientWin::get();
+    std::vector<std::shared_ptr<NavidromeNode>> out;
+
+    auto addSong = [&out](const navidrome::Song& s) {
+        auto n = std::make_shared<NavidromeNode>();
+        n->type           = NavidromeNode::Song;
+        n->id             = s.id;
+        n->displayName    = s.title;
+        n->subtitle       = s.artist;
+        n->album          = s.album;
+        n->coverArtId     = s.coverArtId;
+        n->suffix         = s.suffix;
+        n->track          = s.track;
+        n->year           = s.year;
+        n->duration       = s.duration;
+        n->starred        = s.starred;
+        n->rating         = s.rating;
+        n->childrenLoaded = true;
+        out.push_back(n);
+    };
+    auto addAlbum = [&out](const navidrome::Album& a) {
+        auto n = std::make_shared<NavidromeNode>();
+        n->type        = NavidromeNode::Album;
+        n->id          = a.id;
+        n->displayName = a.name;
+        n->subtitle    = a.artist;
+        n->coverArtId  = a.coverArtId;
+        n->starred     = a.starred;
+        out.push_back(n);
+    };
+
+    switch (node->type) {
+        case NavidromeNode::Artist:
+            for (auto& a : client.getAlbumsForArtist(node->id, outError)) addAlbum(a);
+            break;
+        case NavidromeNode::Album:
+            for (auto& s : client.getSongsForAlbum(node->id, outError)) addSong(s);
+            break;
+        case NavidromeNode::Playlist:
+            for (auto& s : client.getPlaylistSongs(node->id, outError)) addSong(s);
+            break;
+        case NavidromeNode::Category:
+            if (node->category == NavidromeNode::CatStarred) {
+                for (auto& s : client.getStarredSongs(outError)) addSong(s);
+            } else if (node->category == NavidromeNode::CatPlaylists) {
+                for (auto& p : client.getPlaylists(outError)) {
+                    auto n = std::make_shared<NavidromeNode>();
+                    n->type        = NavidromeNode::Playlist;
+                    n->id          = p.id;
+                    n->displayName = p.name;
+                    n->subtitle    = std::to_string(p.songCount) +
+                                     (p.songCount == 1 ? " track" : " tracks");
+                    out.push_back(n);
+                }
+            } else {
+                auto type = navidrome::AlbumListType::Newest;
+                if (node->category == NavidromeNode::CatMostPlayed)
+                    type = navidrome::AlbumListType::Frequent;
+                else if (node->category == NavidromeNode::CatRecentlyPlayed)
+                    type = navidrome::AlbumListType::Recent;
+                else if (node->category == NavidromeNode::CatRandom)
+                    type = navidrome::AlbumListType::Random;
+                for (auto& a : client.getAlbumList(type, 100, outError)) addAlbum(a);
+            }
+            break;
+        default:
+            break;
+    }
+
+    if (!outError.empty()) out.clear();
+    return out;
 }
 
 LRESULT BrowserWindow::OnNavidromeLoaded(UINT, WPARAM wParam, LPARAM, BOOL&) {
@@ -173,9 +279,15 @@ void BrowserWindow::populateRoot(LoadedPayload* payload) {
         setStatus("Error: " + payload->error); return;
     }
     m_rootNodes = payload->nodes;
-    for (auto& n : m_rootNodes)
+    std::size_t artists = 0, songs = 0;
+    for (auto& n : m_rootNodes) {
         insertNode(TVI_ROOT, n);
-    setStatus(std::to_string(m_rootNodes.size()) + " artists");
+        if (n->type == NavidromeNode::Artist) ++artists;
+        if (n->type == NavidromeNode::Song)   ++songs;
+    }
+    // Search results arrive here too — they're songs, not artists.
+    setStatus(songs > 0 ? std::to_string(songs) + " songs found"
+                        : std::to_string(artists) + " artists");
 }
 
 void BrowserWindow::populateChildren(LoadedPayload* payload) {
@@ -219,11 +331,30 @@ void BrowserWindow::populateChildren(LoadedPayload* payload) {
     }
 }
 
-HTREEITEM BrowserWindow::insertNode(HTREEITEM hParent,
-                                    std::shared_ptr<NavidromeNode> node) {
+// Tree label: track number, favorite marker and rating stars all live in the
+// item text — a treeview has no extra columns to put them in.
+std::string BrowserWindow::labelFor(const std::shared_ptr<NavidromeNode>& node) const {
     std::string label = node->displayName;
     if (node->type == NavidromeNode::Song && node->track > 0)
         label = std::to_string(node->track) + ". " + label;
+    // Category rows carry their own icon in the title.
+    if (node->starred && node->type != NavidromeNode::Category)
+        label = "★ " + label;
+    if (node->rating > 0) {
+        label += "  ";
+        for (int i = 0; i < node->rating; ++i) label += "★";
+    }
+    return label;
+}
+
+void BrowserWindow::refreshLabel(const std::shared_ptr<NavidromeNode>& node) {
+    if (!node || !node->hItem) return;
+    m_tree.SetItemText(node->hItem, u8ToWide(labelFor(node)).c_str());
+}
+
+HTREEITEM BrowserWindow::insertNode(HTREEITEM hParent,
+                                    std::shared_ptr<NavidromeNode> node) {
+    std::string label = labelFor(node);
 
     TVINSERTSTRUCT tvi    = {};
     tvi.hParent           = hParent;
@@ -269,36 +400,7 @@ LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
         auto* payload  = new LoadedPayload{};
         payload->parent = node;
         std::string err;
-
-        if (node->type == NavidromeNode::Artist) {
-            for (auto& a : navidrome::SubsonicClientWin::get()
-                               .getAlbumsForArtist(node->id, err)) {
-                auto n = std::make_shared<NavidromeNode>();
-                n->type        = NavidromeNode::Album;
-                n->id          = a.id;
-                n->displayName = a.name;
-                n->subtitle    = a.artist;
-                n->coverArtId  = a.coverArtId;
-                payload->nodes.push_back(n);
-            }
-        } else if (node->type == NavidromeNode::Album) {
-            for (auto& s : navidrome::SubsonicClientWin::get()
-                               .getSongsForAlbum(node->id, err)) {
-                auto n = std::make_shared<NavidromeNode>();
-                n->type           = NavidromeNode::Song;
-                n->id             = s.id;
-                n->displayName    = s.title;
-                n->subtitle       = s.artist;
-                n->album          = s.album;
-                n->coverArtId     = s.coverArtId;
-                n->suffix         = s.suffix;
-                n->track          = s.track;
-                n->year           = s.year;
-                n->duration       = s.duration;
-                n->childrenLoaded = true;
-                payload->nodes.push_back(n);
-            }
-        }
+        payload->nodes = fetchChildren(node, err);
         payload->error = err;
         PostMessage(WM_NAVIDROME_CHILDREN,
                     reinterpret_cast<WPARAM>(payload), 0);
@@ -398,7 +500,146 @@ void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
     menu.CreatePopupMenu();
     menu.AppendMenu(MF_STRING, IDC_PLAY, L"Play Now");
     menu.AppendMenu(MF_STRING, IDC_ADD,  L"Add to Playlist");
+
+    // Server-side favorites + ratings. Both are per-user state on Navidrome, so
+    // they show up in its web UI and in every other Subsonic client.
+    menu.AppendMenu(MF_SEPARATOR);
+    menu.AppendMenu(MF_STRING, IDC_STAR,   L"Star");
+    menu.AppendMenu(MF_STRING, IDC_UNSTAR, L"Unstar");
+
+    CMenu rating;
+    rating.CreatePopupMenu();
+    rating.AppendMenu(MF_STRING, IDC_RATE_0, L"None");
+    static const wchar_t* kStars[] = { L"★", L"★★", L"★★★", L"★★★★", L"★★★★★" };
+    for (int i = 0; i < 5; ++i)
+        rating.AppendMenu(MF_STRING, IDC_RATE_0 + 1 + i, kStars[i]);
+    menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(rating.m_hMenu), L"Rating");
+    // The parent menu owns the submenu now; detach so CMenu's destructor
+    // doesn't destroy it out from under TrackPopupMenu.
+    rating.Detach();
+
+    menu.AppendMenu(MF_SEPARATOR);
+    menu.AppendMenu(MF_STRING, IDC_SEND_PLAYLIST,
+                    L"Send Active Playlist to Navidrome");
+
     menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, *this);
+}
+
+// ---------------------------------------------------------------------------
+// Favorites, ratings and playlist upload
+// ---------------------------------------------------------------------------
+void BrowserWindow::OnStar(UINT, int, HWND)   { applyStarred(true); }
+void BrowserWindow::OnUnstar(UINT, int, HWND) { applyStarred(false); }
+
+void BrowserWindow::applyStarred(bool starred) {
+    std::vector<std::shared_ptr<NavidromeNode>> targets;
+    for (auto& n : selectedNodes()) {
+        if (n->type == NavidromeNode::Song ||
+            n->type == NavidromeNode::Album ||
+            n->type == NavidromeNode::Artist)
+            targets.push_back(n);
+    }
+    if (targets.empty()) { setStatus("Select a song, album or artist first"); return; }
+
+    std::thread([this, targets, starred]() {
+        std::string err;
+        std::size_t done = 0;
+        for (auto& n : targets) {
+            navidrome::StarKind kind = navidrome::StarKind::Song;
+            if (n->type == NavidromeNode::Album)  kind = navidrome::StarKind::Album;
+            if (n->type == NavidromeNode::Artist) kind = navidrome::StarKind::Artist;
+
+            std::string one;
+            if (navidrome::SubsonicClientWin::get().setStarred(starred, n->id, kind, one)) {
+                n->starred = starred;
+                ++done;
+            } else if (err.empty()) {
+                err = one;
+            }
+        }
+        fb2k::inMainThread([this, targets, starred, done, err]() {
+            if (!IsWindow()) return;
+            for (auto& n : targets) refreshLabel(n);
+            setStatus(err.empty()
+                ? (starred ? "Starred " : "Unstarred ") + std::to_string(done) + " item(s)"
+                : "Error: " + err);
+        });
+    }).detach();
+}
+
+// Ratings are a song-level concept in Subsonic; albums/artists are ignored.
+void BrowserWindow::OnRate(UINT, int id, HWND) {
+    int stars = id - IDC_RATE_0;
+    if (stars < 0 || stars > 5) return;
+
+    std::vector<std::shared_ptr<NavidromeNode>> songs;
+    for (auto& n : selectedNodes())
+        if (n->type == NavidromeNode::Song) songs.push_back(n);
+    if (songs.empty()) { setStatus("Select one or more songs to rate"); return; }
+
+    std::thread([this, songs, stars]() {
+        std::string err;
+        for (auto& n : songs) {
+            std::string one;
+            if (navidrome::SubsonicClientWin::get().setRating(stars, n->id, one))
+                n->rating = stars;
+            else if (err.empty())
+                err = one;
+        }
+        fb2k::inMainThread([this, songs, err]() {
+            if (!IsWindow()) return;
+            for (auto& n : songs) refreshLabel(n);
+            setStatus(err.empty()
+                ? "Rated " + std::to_string(songs.size()) + " song(s)"
+                : "Error: " + err);
+        });
+    }).detach();
+}
+
+// Pushes the active foobar2000 playlist to the server under the same name, so
+// it shows up on phones / the web UI. Only navidrome:// tracks can be sent —
+// local files have no Subsonic id.
+void BrowserWindow::OnSendActivePlaylist(UINT, int, HWND) {
+    auto pm = playlist_manager::get();
+    t_size pl = pm->get_active_playlist();
+    if (pl == pfc_infinite) { setStatus("No active playlist"); return; }
+
+    pfc::string8 pfcName;
+    pm->playlist_get_name(pl, pfcName);
+    metadb_handle_list items;
+    pm->playlist_get_all_items(pl, items);
+
+    std::vector<std::string> songIds;
+    std::size_t skipped = 0;
+    for (t_size i = 0; i < items.get_count(); ++i) {
+        std::string id = navidrome::trackIdFromURI(items[i]->get_path());
+        if (id.empty()) { ++skipped; continue; }
+        songIds.push_back(id);
+    }
+    if (songIds.empty()) {
+        setStatus("No Navidrome tracks in the active playlist");
+        return;
+    }
+
+    std::string name = pfcName.is_empty() ? "foobar2000" : pfcName.c_str();
+    setStatus("Uploading playlist…");
+
+    std::thread([this, name, songIds, skipped]() {
+        std::string err;
+        bool ok = navidrome::SubsonicClientWin::get().createPlaylist(name, songIds, err);
+        fb2k::inMainThread([this, name, songIds, skipped, ok, err]() {
+            if (!IsWindow()) return;
+            if (!ok) {
+                setStatus("Upload failed: " + (err.empty() ? "unknown error" : err));
+                return;
+            }
+            std::string msg = "Sent \"" + name + "\" (" +
+                              std::to_string(songIds.size()) + " tracks";
+            if (skipped > 0)
+                msg += ", " + std::to_string(skipped) + " non-Navidrome skipped";
+            setStatus(msg + ")");
+        });
+    }).detach();
 }
 
 void BrowserWindow::OnRefresh(UINT, int, HWND) {
@@ -428,9 +669,12 @@ void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
             n->subtitle       = s.artist;
             n->album          = s.album;
             n->coverArtId     = s.coverArtId;
+            n->suffix         = s.suffix;
             n->track          = s.track;
             n->year           = s.year;
             n->duration       = s.duration;
+            n->starred        = s.starred;
+            n->rating         = s.rating;
             n->childrenLoaded = true;
             payload->nodes.push_back(n);
         }
@@ -441,45 +685,20 @@ void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
 // ---------------------------------------------------------------------------
 // Deep song collection (synchronous, call from background thread)
 // ---------------------------------------------------------------------------
+// Walks any expandable node (artist, album, category, playlist) down to songs,
+// reusing already-expanded children and fetching the rest on demand.
 void BrowserWindow::collectSongsDeep(std::shared_ptr<NavidromeNode> node,
                                      std::vector<std::shared_ptr<NavidromeNode>>& out) {
     if (node->type == NavidromeNode::Song) { out.push_back(node); return; }
     if (node->type == NavidromeNode::Loading || node->type == NavidromeNode::Error) return;
 
-    if (node->type == NavidromeNode::Album) {
-        if (node->childrenLoaded) {
-            for (auto& c : node->children) collectSongsDeep(c, out);
-        } else {
-            std::string err;
-            for (auto& s : navidrome::SubsonicClientWin::get()
-                               .getSongsForAlbum(node->id, err)) {
-                auto n = std::make_shared<NavidromeNode>();
-                n->type = NavidromeNode::Song; n->id = s.id;
-                n->displayName = s.title; n->subtitle = s.artist;
-                n->album = s.album;
-                n->coverArtId = s.coverArtId; n->track = s.track;
-                n->suffix = s.suffix;
-                n->year = s.year;
-                n->duration = s.duration; n->childrenLoaded = true;
-                out.push_back(n);
-            }
-        }
+    if (node->childrenLoaded && !node->children.empty()) {
+        for (auto& c : node->children) collectSongsDeep(c, out);
         return;
     }
-    if (node->type == NavidromeNode::Artist) {
-        if (node->childrenLoaded) {
-            for (auto& c : node->children) collectSongsDeep(c, out);
-        } else {
-            std::string err;
-            for (auto& a : navidrome::SubsonicClientWin::get()
-                               .getAlbumsForArtist(node->id, err)) {
-                auto albumNode = std::make_shared<NavidromeNode>();
-                albumNode->type = NavidromeNode::Album; albumNode->id = a.id;
-                albumNode->displayName = a.name;
-                collectSongsDeep(albumNode, out);
-            }
-        }
-    }
+
+    std::string err;
+    for (auto& c : fetchChildren(node, err)) collectSongsDeep(c, out);
 }
 
 // ---------------------------------------------------------------------------

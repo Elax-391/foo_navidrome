@@ -11,6 +11,7 @@
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic, assign) NSInteger albumCount;
 @property (nonatomic, copy) NSString *coverArtId;
+@property (nonatomic, assign) BOOL starred;
 @end
 
 @interface SubsonicAlbum : NSObject
@@ -21,6 +22,7 @@
 @property (nonatomic, assign) NSInteger songCount;
 @property (nonatomic, assign) NSInteger year;
 @property (nonatomic, copy) NSString *coverArtId;
+@property (nonatomic, assign) BOOL starred;
 @end
 
 @interface SubsonicSong : NSObject
@@ -35,7 +37,25 @@
 @property (nonatomic, assign) NSTimeInterval duration;  // seconds
 @property (nonatomic, copy) NSString *coverArtId;
 @property (nonatomic, copy) NSString *suffix;           // mp3, flac, etc.
+@property (nonatomic, assign) BOOL starred;
+@property (nonatomic, assign) NSInteger rating;         // 0 = unrated, else 1-5
 @end
+
+@interface SubsonicPlaylist : NSObject
+@property (nonatomic, copy) NSString *playlistId;
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, copy) NSString *owner;
+@property (nonatomic, assign) NSInteger songCount;
+@property (nonatomic, assign) NSTimeInterval duration;
+@end
+
+// Item kinds accepted by star.view / unstar.view — Subsonic names the query
+// parameter differently per kind (id / albumId / artistId).
+typedef NS_ENUM(NSInteger, SubsonicStarKind) {
+    SubsonicStarKindSong,
+    SubsonicStarKindAlbum,
+    SubsonicStarKindArtist,
+};
 
 // ---------------------------------------------------------------------------
 // Subsonic API client (Singleton)
@@ -60,6 +80,39 @@
 
 // Search (returns dict with keys "artists", "albums", "songs")
 - (NSDictionary *)search:(NSString *)query error:(NSError **)error;
+
+// Smart lists — getAlbumList2.view "type" (newest / frequent / recent /
+// random / starred). Backs the browser's category nodes.
+- (NSArray<SubsonicAlbum *> *)getAlbumListOfType:(NSString *)type
+                                            size:(NSInteger)size
+                                           error:(NSError **)error;
+
+// Starred songs (getStarred2.view). Albums/artists from the same response are
+// ignored — the Starred node lists tracks.
+- (NSArray<SubsonicSong *> *)getStarredSongsWithError:(NSError **)error;
+
+// Favorites + ratings. Both are per-user server-side state, so they show up in
+// the Navidrome web UI and every other Subsonic client.
+- (BOOL)setStarred:(BOOL)starred
+             forId:(NSString *)itemId
+              kind:(SubsonicStarKind)kind
+             error:(NSError **)error;
+// rating 1-5; 0 clears the rating.
+- (BOOL)setRating:(NSInteger)rating forSongId:(NSString *)songId error:(NSError **)error;
+
+// Server-side playlists
+- (NSArray<SubsonicPlaylist *> *)getPlaylistsWithError:(NSError **)error;
+- (NSArray<SubsonicSong *> *)getPlaylistSongs:(NSString *)playlistId error:(NSError **)error;
+// Creates a new playlist and returns YES on success. Songs are sent in order.
+- (BOOL)createPlaylistNamed:(NSString *)name
+                    songIds:(NSArray<NSString *> *)songIds
+                      error:(NSError **)error;
+
+// Scrobble a play to the server: submission=NO marks "now playing",
+// submission=YES registers the play (play count, Last.fm / ListenBrainz).
+- (BOOL)scrobbleSongId:(NSString *)songId
+            submission:(BOOL)submission
+                 error:(NSError **)error;
 
 // URL builders — no network required
 // Returns the authenticated HTTP stream URL for foobar2000 to play directly.

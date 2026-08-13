@@ -7,10 +7,13 @@
 #include <SDK/album_art.h>
 #include <SDK/album_art_helpers.h>
 #include <SDK/initquit.h>
+#include <SDK/play_callback.h>
+#include <algorithm>
 #include <string>
 #include <cctype>
 #include <mutex>
 #include <set>
+#include <thread>
 #pragma comment(lib, "winhttp.lib")
 
 namespace {
@@ -51,6 +54,7 @@ static constexpr GUID guid_prefs_page     = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xb
 static constexpr GUID guid_mainmenu_group = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x06} };
 static constexpr GUID guid_mainmenu_cmd   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x07} };
 static constexpr GUID guid_cfg_custom_headers = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0a} };
+static constexpr GUID guid_cfg_scrobble   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0b} };
 
 // ---------------------------------------------------------------------------
 // Config vars
@@ -64,6 +68,12 @@ namespace navidrome {
     // API, cover art and audio stream. Used e.g. for Cloudflare Access
     // service-token headers when Navidrome sits behind a Zero Trust tunnel.
     cfg_string cfg_custom_headers(guid_cfg_custom_headers, "");
+    // Report plays back to Navidrome (play counts, "Recently Played", and any
+    // Last.fm / ListenBrainz relay the server has configured).
+    // Qualified: an unqualified cfg_bool resolves to the legacy
+    // cfg_int_t<bool> (no set()) here, and the two flavours serialize
+    // differently — both platforms must use the same one.
+    cfg_var_modern::cfg_bool cfg_scrobble(guid_cfg_scrobble, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +227,7 @@ public:
         SetDlgItemText(IDC_URL,  L"http://localhost:4533/");
         SetDlgItemText(IDC_USER, L"");
         SetDlgItemText(IDC_PASS, L"");
+        CheckDlgButton(IDC_SCROBBLE, BST_CHECKED);
         m_changed = true; notifyCb();
     }
 
@@ -228,10 +239,12 @@ public:
         COMMAND_HANDLER_EX(IDC_PASS, EN_CHANGE, OnChanged)
         COMMAND_HANDLER_EX(IDC_TEST, BN_CLICKED, OnTest)
         COMMAND_HANDLER_EX(IDC_HEADERS, BN_CLICKED, OnHeaders)
+        COMMAND_HANDLER_EX(IDC_SCROBBLE, BN_CLICKED, OnChanged)
     END_MSG_MAP()
 
 private:
-    enum { IDC_URL=1001, IDC_USER=1002, IDC_PASS=1003, IDC_TEST=1004, IDC_STATUS=1005, IDC_HEADERS=1006 };
+    enum { IDC_URL=1001, IDC_USER=1002, IDC_PASS=1003, IDC_TEST=1004, IDC_STATUS=1005,
+           IDC_HEADERS=1006, IDC_SCROBBLE=1007 };
     // Posted from the background ping thread back to the UI thread (see OnTest).
     static constexpr UINT WM_TEST_RESULT = WM_USER + 200;
 
@@ -264,6 +277,11 @@ private:
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HEADERS)), nullptr, nullptr);
         SendMessageW(hdr, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
 
+        HWND scr = CreateWindowW(L"BUTTON", L"Report plays to Navidrome (scrobbling)",
+            WS_CHILD|WS_VISIBLE|BS_AUTOCHECKBOX, 92,166, 290,20, *this,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SCROBBLE)), nullptr, nullptr);
+        SendMessageW(scr, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
+
         loadSettings();
         return 0;
     }
@@ -274,6 +292,7 @@ private:
         SetDlgItemText(IDC_URL,  pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_server_url.get().c_str()));
         SetDlgItemText(IDC_USER, pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_username.get().c_str()));
         SetDlgItemText(IDC_PASS, pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_password.get().c_str()));
+        CheckDlgButton(IDC_SCROBBLE, navidrome::cfg_scrobble.get() ? BST_CHECKED : BST_UNCHECKED);
     }
 
     void saveSettings() {
@@ -285,6 +304,7 @@ private:
         navidrome::cfg_server_url.set(getText(IDC_URL).c_str());
         navidrome::cfg_username.set(getText(IDC_USER).c_str());
         navidrome::cfg_password.set(getText(IDC_PASS).c_str());
+        navidrome::cfg_scrobble.set(IsDlgButtonChecked(IDC_SCROBBLE) == BST_CHECKED);
     }
 
     void OnChanged(UINT, int, HWND) { m_changed = true; notifyCb(); }
@@ -524,6 +544,73 @@ public:
     }
 };
 FB2K_SERVICE_FACTORY(NavidromeArtExtractor);
+
+// ---------------------------------------------------------------------------
+// Scrobbler — reports plays back to Navidrome so play counts, "Recently
+// Played" and any Last.fm / ListenBrainz relay configured server-side reflect
+// what's played through foobar2000.
+//
+// Two calls per track, matching the Subsonic contract: submission=false on
+// start ("now playing"), submission=true once enough of the track has been
+// heard (half its length, capped at 4 minutes — the Last.fm convention).
+// ---------------------------------------------------------------------------
+class NavidromeScrobbler : public play_callback_static {
+public:
+    unsigned get_flags() override {
+        return flag_on_playback_new_track | flag_on_playback_time |
+               flag_on_playback_stop;
+    }
+
+    void on_playback_new_track(metadb_handle_ptr track) override {
+        m_songId.clear();
+        m_submitted = false;
+        m_length    = 0.0;
+        if (track.is_empty() || !navidrome::cfg_scrobble.get()) return;
+
+        m_songId = navidrome::trackIdFromURI(track->get_path());
+        if (m_songId.empty()) return;   // not one of ours
+        m_length = track->get_length();
+        scrobbleAsync(m_songId, false);
+    }
+
+    void on_playback_time(double time) override {
+        if (m_songId.empty() || m_submitted) return;
+        // Unknown length (live stream): fall back to the 4-minute cap alone.
+        double threshold = (m_length > 0) ? (std::min)(240.0, m_length * 0.5) : 240.0;
+        if (time < threshold) return;
+        m_submitted = true;
+        scrobbleAsync(m_songId, true);
+    }
+
+    void on_playback_stop(play_control::t_stop_reason) override {
+        m_songId.clear();
+        m_submitted = false;
+    }
+
+    // Unused callbacks (not requested in get_flags, but the interface is pure).
+    void on_playback_starting(play_control::t_track_command, bool) override {}
+    void on_playback_seek(double) override {}
+    void on_playback_pause(bool) override {}
+    void on_playback_edited(metadb_handle_ptr) override {}
+    void on_playback_dynamic_info(const file_info&) override {}
+    void on_playback_dynamic_info_track(const file_info&) override {}
+    void on_volume_change(float) override {}
+
+private:
+    // Fire and forget on a worker thread — a slow or unreachable server must
+    // never stall playback, and a failed scrobble isn't worth interrupting for.
+    static void scrobbleAsync(std::string songId, bool submission) {
+        std::thread([songId, submission]() {
+            std::string err;
+            navidrome::SubsonicClientWin::get().scrobble(songId, submission, err);
+        }).detach();
+    }
+
+    std::string m_songId;
+    double      m_length    = 0.0;
+    bool        m_submitted = false;
+};
+static play_callback_static_factory_t<NavidromeScrobbler> g_navidrome_scrobbler_factory;
 
 // ---------------------------------------------------------------------------
 // Init/quit — installs/refreshes the ESLyric bridge on startup so lyrics work

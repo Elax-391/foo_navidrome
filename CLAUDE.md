@@ -8,10 +8,10 @@ foobar2000 v2 component that browses and streams from Navidrome / Subsonic-compa
 
 Shared C++ core + per-platform UI/HTTP layers:
 
-- `main.cpp`, `stdafx.h`, `SubsonicTypes.h` — cross-platform shared code (component version, pure-C++ data types)
+- `main.cpp`, `stdafx.h`, `SubsonicTypes.h` — cross-platform shared code (component version, pure-C++ data types, `trackIdFromURI()` used by both scrobblers, `StarKind` / `AlbumListType` enums)
 - `SubsonicClient.h/.mm` — macOS Subsonic HTTP client (ObjC/NSURLSession)
 - `Windows/SubsonicClientWin.h/.cpp` — Windows Subsonic client (WinHTTP)
-- `NavidromePlugin.mm` — macOS registration: `cfg_string` for URL/user/pass/salt, `preferences_page` under Tools, `mainmenu_commands` under File menu, `library_viewer` factory
+- `NavidromePlugin.mm` — macOS registration: `cfg_string` for URL/user/pass/salt, `preferences_page` under Tools, `mainmenu_commands` under File menu, `library_viewer` factory, and the **scrobbler** (`play_callback_static`)
 - `NavidromeInput.h/.mm` — `input_singletrack` handler for the `navidrome://track/<id>?...` URI scheme. Parses metadata from the URI for `get_info()`; on `decode_initialize()`, resolves the current HTTP stream URL via SubsonicClient and opens a nested `input_decoder` via `input_entry::g_open_for_decoding(..., fromRedirect=true)`. Registered with `input_entry::flag_redirect`.
 - `NavidromeArtExtractor.mm` — implements `album_art_fallback` so Now Playing / playlists show art fetched from Navidrome
 - `Mac/NavidromeBrowserController.*` — `NSViewController` housing the Artists/Albums/Songs tree, search, action buttons. Mounted in two places: (a) directly inside the *Preferences › Media Library › Navidrome* prefs sub-page; (b) wrapped in a standalone `NSWindow` by `NavidromeShowStandaloneBrowser()` (called by the File menu and `library_viewer.activate()`). Each mount point creates a fresh controller — Cocoa requires each `NSView` to have a single superview, so the previous shared-singleton pattern would have broken dual-mount. Enqueues tracks as `navidrome://` URIs (not raw HTTP URLs).
@@ -21,6 +21,21 @@ Shared C++ core + per-platform UI/HTTP layers:
 - `Windows/EsLyricBridge.h/.cpp`, `Windows/EsLyricScript.h` — bridges to the third-party [ESLyric](https://github.com/esdatura/eslyric-fb2k) foobar2000 component, if installed (`%APPDATA%\foobar2000\profile\eslyric-data\` present). On startup and whenever credentials/headers are saved, writes a generated `scripts/lib/foo_navidrome/config.js` (server URL + Subsonic token, never the raw password) and a searcher script `scripts/searcher/navidrome.js` (embedded as `kEsLyricScriptSource`) that calls Navidrome's `getLyricsBySongId.view`, falling back to the legacy `getLyrics.view` artist/title lookup per-server once the by-id endpoint 404s. A no-op (empty error string) when ESLyric isn't installed.
 
 GUIDs for cfg vars / prefs page / menu commands are hardcoded constants in `NavidromePlugin.mm` (lines 11–17) — must be regenerated when forking.
+
+### Subsonic feature surface (both platforms)
+
+Beyond browse/search/stream, both clients implement — with the same method names modulo language conventions:
+
+| Feature | Endpoint(s) | Surfaced as |
+|---|---|---|
+| Scrobbling | `scrobble.view` | `play_callback_static` in `NavidromePlugin.mm` / `NavidromePluginWin.cpp`; `submission=false` on new track, `true` at `min(240s, length/2)`; gated on `cfg_scrobble` |
+| Smart lists | `getAlbumList2.view` (newest/frequent/recent/random), `getStarred2.view` | Category nodes above the artist list in both browsers |
+| Server playlists | `getPlaylists.view`, `getPlaylist.view` | "Playlists" category node → playlist nodes → songs |
+| Playlist upload | `createPlaylist.view` + `updatePlaylist.view` | "Send Active Playlist to Navidrome" context-menu item |
+| Favorites | `star.view` / `unstar.view` | Star / Unstar context-menu items; `★ ` prefix on the row |
+| Ratings | `setRating.view` | Rating submenu (None, 1-5); rendered as trailing stars |
+
+Playlist upload chunks song ids **50 per request** (create with the first chunk, then `updatePlaylist` for the rest). Subsonic passes ids on the query string, and the Windows client's `WinHttpCrackUrl` path buffer is 4096 wchars — a 200-track playlist in one URL silently truncates.
 
 Credentials persist via `cfg_string` (foobar2000 config store). Password is sent via Subsonic token auth (md5 of password + salt) by `SubsonicClient`.
 
@@ -107,6 +122,12 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 ## Gotchas
 
 - **`MediaEnrichmentLogic.cpp` / `EsLyricBridge.cpp` must stay `<PrecompiledHeader>NotUsing</PrecompiledHeader>` in `foo_navidrome.vcxproj`.** The rest of `Windows/*.cpp` uses the shared `stdafx.h` PCH. `MediaEnrichmentLogic.cpp` deliberately doesn't include `stdafx.h` at all (kept SDK-free so `Windows/tests/MediaEnrichmentTests.vcxproj` can compile it standalone, no foobar SDK/PCH involved); `EsLyricBridge.cpp` does include `stdafx.h` but is marked `NotUsing` to match. Don't "clean up" either without checking both project files still build.
+
+- **`cfg_bool` must be written as `cfg_var_modern::cfg_bool`.** Unqualified, it resolves to the legacy `cfg_var_legacy::cfg_int_t<bool>` on the Windows SDK headers — which has no `set()`, so the Windows build fails while macOS (where the modern one wins) compiles fine. The two flavours also serialize differently, so a var declared as legacy on one platform and modern on the other would not round-trip. `cfg_string` happens not to have this ambiguity; `cfg_bool` does. Applies to `cfg_scrobble` in `NavidromePlugin.mm` / `NavidromePluginWin.cpp` and its `extern` in `Mac/NavidromePreferencesController.mm`.
+
+- **`std::min` / `std::max` need parens on Windows: `(std::min)(a, b)`.** `windows.h` defines `min`/`max` as macros, so a bare `std::min(...)` expands into garbage and fails with a bewildering `error: expected unqualified-id`. macOS compiles the same line fine, so this only shows up in the Windows/CI build.
+
+- **`scripts/win-vm/build-mac.sh` hardcodes SRCS too — same trap as `win-build-local.sh` below.** It was missing `MediaEnrichmentLogic.cpp` and `EsLyricBridge.cpp` entirely (added to the vcxproj later, never to this script), so the mac cross-build linked with a wall of undefined symbols until they were added. When you add a `Windows/*.cpp`, update **three** places: `foo_navidrome.vcxproj`, `scripts/win-build-local.sh`, and `scripts/win-vm/build-mac.sh`.
 
 - **`scripts/win-build-local.sh` hardcodes its own component source list (SRCS) instead of reading `foo_navidrome.vcxproj`.** Adding a new `Windows/*.cpp` to the vcxproj (CI/MSVC build) does NOT make it visible to the local clang-cl/Wine build — it silently compiles without it and fails at link time with a wall of undefined symbols. When you add a source file, add it to both `foo_navidrome.vcxproj`'s `ClCompile` `ItemGroup` AND the `echo "$REPO/Windows/....cpp"` lines in `win-build-local.sh`.
 

@@ -1,5 +1,6 @@
 #import "NavidromeBrowserController.h"
 #import "../NavidromeInput.h"
+#include "../SubsonicTypes.h"
 #include <SDK/playlist.h>
 #include <SDK/metadb.h>
 #include <SDK/playable_location.h>
@@ -25,6 +26,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
     n.nodeId      = a.artistId;
     n.displayName = a.name;
     n.coverArtId  = a.coverArtId;
+    n.starred     = a.starred;
     n.children    = [NSMutableArray array];
     return n;
 }
@@ -36,6 +38,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
     n.displayName = a.name;
     n.subtitle    = a.artist;
     n.coverArtId  = a.coverArtId;
+    n.starred     = a.starred;
     n.children    = [NSMutableArray array];
     return n;
 }
@@ -51,8 +54,30 @@ static NSString *formatDuration(NSTimeInterval secs) {
     n.year         = s.year;
     n.duration     = s.duration;
     n.coverArtId   = s.coverArtId;
+    n.starred      = s.starred;
+    n.rating       = s.rating;
     n.children     = [NSMutableArray array];
     n.childrenLoaded = YES;  // Songs are always leaves
+    return n;
+}
+
++ (instancetype)playlistNode:(SubsonicPlaylist *)p {
+    NavidromeNode *n = [NavidromeNode new];
+    n.type        = NavidromeNodeTypePlaylist;
+    n.nodeId      = p.playlistId;
+    n.displayName = p.name;
+    n.subtitle    = p.songCount == 1 ? @"1 track"
+                  : [NSString stringWithFormat:@"%ld tracks", (long)p.songCount];
+    n.children    = [NSMutableArray array];
+    return n;
+}
+
++ (instancetype)categoryNode:(NavidromeCategoryKind)kind title:(NSString *)title {
+    NavidromeNode *n = [NavidromeNode new];
+    n.type         = NavidromeNodeTypeCategory;
+    n.categoryKind = kind;
+    n.displayName  = title;
+    n.children     = [NSMutableArray array];
     return n;
 }
 
@@ -194,6 +219,41 @@ static NSString *formatDuration(NSTimeInterval secs) {
                                              action:@selector(addToPlaylist:)
                                       keyEquivalent:@""];
     addItem.target = self;
+
+    // Server-side favorites + ratings. Both are per-user state on Navidrome, so
+    // they show up in its web UI and in every other Subsonic client.
+    [rowMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *starItem = [rowMenu addItemWithTitle:@"Star"
+                                              action:@selector(starSelection:)
+                                       keyEquivalent:@""];
+    starItem.target = self;
+    NSMenuItem *unstarItem = [rowMenu addItemWithTitle:@"Unstar"
+                                                action:@selector(unstarSelection:)
+                                         keyEquivalent:@""];
+    unstarItem.target = self;
+
+    NSMenuItem *ratingItem = [rowMenu addItemWithTitle:@"Rating"
+                                                action:nil
+                                         keyEquivalent:@""];
+    NSMenu *ratingMenu = [[NSMenu alloc] init];
+    for (NSInteger stars = 0; stars <= 5; stars++) {
+        NSString *title = stars == 0 ? @"None"
+                        : [@"" stringByPaddingToLength:(NSUInteger)stars * 1
+                                            withString:@"★" startingAtIndex:0];
+        NSMenuItem *it = [ratingMenu addItemWithTitle:title
+                                               action:@selector(setRatingFromMenu:)
+                                        keyEquivalent:@""];
+        it.target = self;
+        it.tag    = stars;
+    }
+    [rowMenu setSubmenu:ratingMenu forItem:ratingItem];
+
+    [rowMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *uploadItem = [rowMenu addItemWithTitle:@"Send Active Playlist to Navidrome"
+                                                action:@selector(sendActivePlaylist:)
+                                         keyEquivalent:@""];
+    uploadItem.target = self;
+
     _outlineView.menu = rowMenu;
 
     // Columns
@@ -292,6 +352,19 @@ static NSString *formatDuration(NSTimeInterval secs) {
 // Data loading
 // ---------------------------------------------------------------------------
 
+// Smart-list roots, shown above the artist list. Each expands lazily like any
+// other node, so opening the browser still costs exactly one getArtists call.
+- (NSArray<NavidromeNode *> *)buildCategoryNodes {
+    return @[
+        [NavidromeNode categoryNode:NavidromeCategoryStarred        title:@"★ Starred"],
+        [NavidromeNode categoryNode:NavidromeCategoryRecentlyAdded  title:@"Recently Added"],
+        [NavidromeNode categoryNode:NavidromeCategoryMostPlayed     title:@"Most Played"],
+        [NavidromeNode categoryNode:NavidromeCategoryRecentlyPlayed title:@"Recently Played"],
+        [NavidromeNode categoryNode:NavidromeCategoryRandom         title:@"Random Albums"],
+        [NavidromeNode categoryNode:NavidromeCategoryPlaylists      title:@"Playlists"],
+    ];
+}
+
 - (void)loadArtists {
     if (![SubsonicClient.sharedClient isConfigured]) {
         _statusLabel.stringValue = @"Not configured — set server in Preferences > Navidrome";
@@ -311,6 +384,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
                 _statusLabel.stringValue = [NSString stringWithFormat:@"Error: %@", err.localizedDescription ?: @"Unknown"];
                 return;
             }
+            [_rootNodes addObjectsFromArray:[self buildCategoryNodes]];
             for (SubsonicArtist *a in artists) {
                 [_rootNodes addObject:[NavidromeNode artistNode:a]];
             }
@@ -318,6 +392,55 @@ static NSString *formatDuration(NSTimeInterval secs) {
             [_outlineView reloadData];
         });
     });
+}
+
+// Synchronous child fetch for any expandable node — background thread only.
+// Shared by lazy expansion and the deep song collector so both agree on what a
+// category / playlist / artist / album contains.
+- (NSMutableArray<NavidromeNode *> *)fetchChildrenOf:(NavidromeNode *)node
+                                               error:(NSError **)outError {
+    NSMutableArray<NavidromeNode *> *childNodes = [NSMutableArray array];
+    SubsonicClient *client = SubsonicClient.sharedClient;
+
+    switch (node.type) {
+        case NavidromeNodeTypeArtist: {
+            for (SubsonicAlbum *a in [client getAlbumsForArtist:node.nodeId error:outError])
+                [childNodes addObject:[NavidromeNode albumNode:a]];
+            break;
+        }
+        case NavidromeNodeTypeAlbum: {
+            for (SubsonicSong *s in [client getSongsForAlbum:node.nodeId error:outError])
+                [childNodes addObject:[NavidromeNode songNode:s]];
+            break;
+        }
+        case NavidromeNodeTypePlaylist: {
+            for (SubsonicSong *s in [client getPlaylistSongs:node.nodeId error:outError])
+                [childNodes addObject:[NavidromeNode songNode:s]];
+            break;
+        }
+        case NavidromeNodeTypeCategory: {
+            if (node.categoryKind == NavidromeCategoryStarred) {
+                for (SubsonicSong *s in [client getStarredSongsWithError:outError])
+                    [childNodes addObject:[NavidromeNode songNode:s]];
+            } else if (node.categoryKind == NavidromeCategoryPlaylists) {
+                for (SubsonicPlaylist *p in [client getPlaylistsWithError:outError])
+                    [childNodes addObject:[NavidromeNode playlistNode:p]];
+            } else {
+                NSString *type = @"newest";
+                if (node.categoryKind == NavidromeCategoryMostPlayed)     type = @"frequent";
+                if (node.categoryKind == NavidromeCategoryRecentlyPlayed) type = @"recent";
+                if (node.categoryKind == NavidromeCategoryRandom)         type = @"random";
+                for (SubsonicAlbum *a in [client getAlbumListOfType:type size:100 error:outError])
+                    [childNodes addObject:[NavidromeNode albumNode:a]];
+            }
+            break;
+        }
+        default:
+            break;
+    }
+
+    if (outError && *outError) [childNodes removeAllObjects];
+    return childNodes;
 }
 
 - (void)loadChildrenOfNode:(NavidromeNode *)node inOutlineView:(NSOutlineView *)ov {
@@ -331,23 +454,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSError *err = nil;
-        NSMutableArray<NavidromeNode *> *childNodes = [NSMutableArray array];
-
-        if (node.type == NavidromeNodeTypeArtist) {
-            NSArray<SubsonicAlbum *> *albums =
-                [SubsonicClient.sharedClient getAlbumsForArtist:node.nodeId error:&err];
-            if (!err) {
-                for (SubsonicAlbum *a in albums)
-                    [childNodes addObject:[NavidromeNode albumNode:a]];
-            }
-        } else if (node.type == NavidromeNodeTypeAlbum) {
-            NSArray<SubsonicSong *> *songs =
-                [SubsonicClient.sharedClient getSongsForAlbum:node.nodeId error:&err];
-            if (!err) {
-                for (SubsonicSong *s in songs)
-                    [childNodes addObject:[NavidromeNode songNode:s]];
-            }
-        }
+        NSMutableArray<NavidromeNode *> *childNodes = [self fetchChildrenOf:node error:&err];
 
         dispatch_async(dispatch_get_main_queue(), ^{
             node.isLoading = NO;
@@ -412,15 +519,14 @@ static NSString *formatDuration(NSTimeInterval secs) {
 // Adding to playlist
 // ---------------------------------------------------------------------------
 
-// Returns all selected nodes (artists, albums, or songs).
+// Returns all selected playable nodes (anything but the loading/error rows).
 - (NSArray<NavidromeNode *> *)selectedNodes {
     NSMutableArray<NavidromeNode *> *nodes = [NSMutableArray array];
     NSIndexSet *selected = [_outlineView selectedRowIndexes];
     [selected enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
         NavidromeNode *node = [_outlineView itemAtRow:idx];
-        if (node.type == NavidromeNodeTypeSong ||
-            node.type == NavidromeNodeTypeArtist ||
-            node.type == NavidromeNodeTypeAlbum) {
+        if (node.type != NavidromeNodeTypeLoading &&
+            node.type != NavidromeNodeTypeError) {
             [nodes addObject:node];
         }
     }];
@@ -488,6 +594,8 @@ static NSString *formatDuration(NSTimeInterval secs) {
 }
 
 // Synchronous deep song collector — must be called from a background thread.
+// Walks any expandable node (artist, album, category, playlist) down to songs,
+// reusing already-expanded children and fetching the rest on demand.
 - (void)collectSongsDeep:(NavidromeNode *)node
                     into:(NSMutableArray<NavidromeNode *> *)songs
                    error:(NSError **)outError {
@@ -498,37 +606,17 @@ static NSString *formatDuration(NSTimeInterval secs) {
     if (node.type == NavidromeNodeTypeLoading || node.type == NavidromeNodeTypeError)
         return;
 
-    if (node.type == NavidromeNodeTypeAlbum) {
-        if (node.childrenLoaded && node.children.count > 0) {
-            for (NavidromeNode *child in node.children)
-                [self collectSongsDeep:child into:songs error:outError];
-        } else {
-            NSArray<SubsonicSong *> *raw =
-                [SubsonicClient.sharedClient getSongsForAlbum:node.nodeId error:outError];
-            if (outError && *outError) return;
-            for (SubsonicSong *s in raw)
-                [songs addObject:[NavidromeNode songNode:s]];
-        }
-        return;
+    NSArray<NavidromeNode *> *children;
+    if (node.childrenLoaded && node.children.count > 0) {
+        children = node.children;
+    } else {
+        children = [self fetchChildrenOf:node error:outError];
+        if (outError && *outError) return;
     }
 
-    if (node.type == NavidromeNodeTypeArtist) {
-        NSArray<NavidromeNode *> *albumNodes;
-        if (node.childrenLoaded && node.children.count > 0) {
-            albumNodes = node.children;
-        } else {
-            NSArray<SubsonicAlbum *> *albums =
-                [SubsonicClient.sharedClient getAlbumsForArtist:node.nodeId error:outError];
-            if (outError && *outError) return;
-            NSMutableArray *tmp = [NSMutableArray array];
-            for (SubsonicAlbum *a in albums)
-                [tmp addObject:[NavidromeNode albumNode:a]];
-            albumNodes = tmp;
-        }
-        for (NavidromeNode *albumNode in albumNodes) {
-            [self collectSongsDeep:albumNode into:songs error:outError];
-            if (outError && *outError) return;
-        }
+    for (NavidromeNode *child in children) {
+        [self collectSongsDeep:child into:songs error:outError];
+        if (outError && *outError) return;
     }
 }
 
@@ -629,6 +717,146 @@ static NSString *formatDuration(NSTimeInterval secs) {
     [self loadArtists];
 }
 
+// ---------------------------------------------------------------------------
+// Favorites, ratings and playlist upload
+// ---------------------------------------------------------------------------
+
+- (IBAction)starSelection:(id)sender   { [self applyStarred:YES]; }
+- (IBAction)unstarSelection:(id)sender { [self applyStarred:NO]; }
+
+- (void)applyStarred:(BOOL)starred {
+    NSMutableArray<NavidromeNode *> *targets = [NSMutableArray array];
+    for (NavidromeNode *n in [self selectedNodes]) {
+        if (n.type == NavidromeNodeTypeSong ||
+            n.type == NavidromeNodeTypeAlbum ||
+            n.type == NavidromeNodeTypeArtist)
+            [targets addObject:n];
+    }
+    if (targets.count == 0) {
+        _statusLabel.stringValue = @"Select a song, album or artist first";
+        return;
+    }
+
+    [_spinner startAnimation:nil];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSError *err = nil;
+        NSUInteger done = 0;
+        for (NavidromeNode *n in targets) {
+            SubsonicStarKind kind = SubsonicStarKindSong;
+            if (n.type == NavidromeNodeTypeAlbum)  kind = SubsonicStarKindAlbum;
+            if (n.type == NavidromeNodeTypeArtist) kind = SubsonicStarKindArtist;
+            NSError *one = nil;
+            if ([SubsonicClient.sharedClient setStarred:starred forId:n.nodeId
+                                                   kind:kind error:&one]) {
+                n.starred = starred;
+                done++;
+            } else if (!err) {
+                err = one;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [_spinner stopAnimation:nil];
+            if (err) {
+                _statusLabel.stringValue =
+                    [NSString stringWithFormat:@"Error: %@", err.localizedDescription];
+            } else {
+                _statusLabel.stringValue = [NSString stringWithFormat:@"%@ %lu item(s)",
+                    starred ? @"Starred" : @"Unstarred", (unsigned long)done];
+            }
+            [_outlineView reloadData];
+        });
+    });
+}
+
+// Ratings are a song-level concept in Subsonic; albums/artists are ignored.
+- (IBAction)setRatingFromMenu:(NSMenuItem *)item {
+    NSInteger rating = item.tag;
+    NSMutableArray<NavidromeNode *> *songs = [NSMutableArray array];
+    for (NavidromeNode *n in [self selectedNodes])
+        if (n.type == NavidromeNodeTypeSong) [songs addObject:n];
+
+    if (songs.count == 0) {
+        _statusLabel.stringValue = @"Select one or more songs to rate";
+        return;
+    }
+
+    [_spinner startAnimation:nil];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSError *err = nil;
+        for (NavidromeNode *n in songs) {
+            NSError *one = nil;
+            if ([SubsonicClient.sharedClient setRating:rating forSongId:n.nodeId error:&one])
+                n.rating = rating;
+            else if (!err)
+                err = one;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [_spinner stopAnimation:nil];
+            _statusLabel.stringValue = err
+                ? [NSString stringWithFormat:@"Error: %@", err.localizedDescription]
+                : [NSString stringWithFormat:@"Rated %lu song(s)", (unsigned long)songs.count];
+            [_outlineView reloadData];
+        });
+    });
+}
+
+// Pushes the active foobar2000 playlist to the server under the same name, so
+// it shows up on phones / the web UI. Only navidrome:// tracks can be sent —
+// local files have no Subsonic id.
+- (IBAction)sendActivePlaylist:(id)sender {
+    auto pm = playlist_manager::get();
+    t_size playlist = pm->get_active_playlist();
+    if (playlist == pfc_infinite) {
+        _statusLabel.stringValue = @"No active playlist";
+        return;
+    }
+
+    pfc::string8 pfcName;
+    pm->playlist_get_name(playlist, pfcName);
+    metadb_handle_list items;
+    pm->playlist_get_all_items(playlist, items);
+
+    NSMutableArray<NSString *> *songIds = [NSMutableArray array];
+    NSUInteger skipped = 0;
+    for (t_size i = 0; i < items.get_count(); i++) {
+        std::string id = navidrome::trackIdFromURI(items[i]->get_path());
+        if (id.empty()) { skipped++; continue; }
+        [songIds addObject:[NSString stringWithUTF8String:id.c_str()]];
+    }
+
+    if (songIds.count == 0) {
+        _statusLabel.stringValue = @"No Navidrome tracks in the active playlist";
+        return;
+    }
+
+    NSString *name = [NSString stringWithUTF8String:pfcName.c_str()];
+    if (name.length == 0) name = @"foobar2000";
+    NSUInteger skippedCount = skipped;
+
+    [_spinner startAnimation:nil];
+    _statusLabel.stringValue = @"Uploading playlist…";
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSError *err = nil;
+        BOOL ok = [SubsonicClient.sharedClient createPlaylistNamed:name
+                                                           songIds:songIds
+                                                             error:&err];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [_spinner stopAnimation:nil];
+            if (!ok) {
+                _statusLabel.stringValue =
+                    [NSString stringWithFormat:@"Upload failed: %@",
+                     err.localizedDescription ?: @"Unknown error"];
+                return;
+            }
+            _statusLabel.stringValue = skippedCount > 0
+                ? [NSString stringWithFormat:@"Sent “%@” (%lu tracks, %lu non-Navidrome skipped)",
+                   name, (unsigned long)songIds.count, (unsigned long)skippedCount]
+                : [NSString stringWithFormat:@"Sent “%@” (%lu tracks)",
+                   name, (unsigned long)songIds.count];
+        });
+    });
+}
+
 - (void)doubleClicked:(id)sender {
     NSInteger row = [_outlineView clickedRow];
     if (row < 0) return;
@@ -707,9 +935,18 @@ static NSString *formatDuration(NSTimeInterval secs) {
         NSString *name = node.displayName ?: @"";
         if (node.type == NavidromeNodeTypeSong && node.trackNumber > 0)
             name = [NSString stringWithFormat:@"%ld. %@", (long)node.trackNumber, name];
+        // Favorites are marked inline; category rows carry their own icon.
+        if (node.starred && node.type != NavidromeNodeTypeCategory)
+            name = [@"★ " stringByAppendingString:name];
         cell.stringValue = name;
     } else if ([tableColumn.identifier isEqualToString:@"sub"]) {
-        cell.stringValue = node.subtitle ?: @"";
+        NSString *sub = node.subtitle ?: @"";
+        if (node.rating > 0) {
+            NSString *stars = [@"" stringByPaddingToLength:(NSUInteger)node.rating
+                                                withString:@"★" startingAtIndex:0];
+            sub = sub.length ? [NSString stringWithFormat:@"%@  %@", sub, stars] : stars;
+        }
+        cell.stringValue = sub;
         cell.textColor = [NSColor secondaryLabelColor];
     } else if ([tableColumn.identifier isEqualToString:@"dur"]) {
         cell.stringValue = node.duration > 0 ? formatDuration(node.duration) : @"";

@@ -2,6 +2,7 @@
 #include "SubsonicClientWin.h"
 #include "MediaEnrichmentLogic.h"
 #include <SDK/cfg_var.h>
+#include <algorithm>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
@@ -167,6 +168,39 @@ static std::vector<std::string> jarr(const std::string& s, const std::string& ke
         if (depth == 0) res.push_back(s.substr(st, p - st + 1));
     }
     return res;
+}
+
+// Parse one "song"/"entry" JSON object into a Song. Subsonic reports a favorite
+// as a "starred" timestamp string, so presence — not value — is the flag.
+static navidrome::Song parseSongObj(const std::string& s) {
+    navidrome::Song so;
+    so.id         = jstr(s, "id");
+    so.title      = jstr(s, "title", "Unknown Title");
+    so.artist     = jstr(s, "artist");
+    so.artistId   = jstr(s, "artistId");
+    so.album      = jstr(s, "album");
+    so.albumId    = jstr(s, "albumId");
+    so.coverArtId = jstr(s, "coverArt");
+    so.suffix     = jstr(s, "suffix");
+    so.track      = jint(s, "track");
+    so.year       = jint(s, "year");
+    so.duration   = jdbl(s, "duration");
+    so.starred    = !jstr(s, "starred").empty();
+    so.rating     = jint(s, "userRating");
+    return so;
+}
+
+static navidrome::Album parseAlbumObj(const std::string& a) {
+    navidrome::Album al;
+    al.id         = jstr(a, "id");
+    al.name       = jstr(a, "name", "Unknown Album");
+    al.artist     = jstr(a, "artist");
+    al.artistId   = jstr(a, "artistId");
+    al.coverArtId = jstr(a, "coverArt");
+    al.year       = jint(a, "year");
+    al.songCount  = jint(a, "songCount");
+    al.starred    = !jstr(a, "starred").empty();
+    return al;
 }
 
 // Check Subsonic status and return inner response object, or set error
@@ -350,14 +384,8 @@ navidrome::SubsonicClientWin::getAlbumsForArtist(const std::string& artistId,
 
     std::vector<Album> result;
     for (auto& a : jarr(root, "album")) {
-        Album al;
-        al.id         = jstr(a, "id");
-        al.name       = jstr(a, "name", "Unknown Album");
-        al.artist     = jstr(a, "artist");
-        al.artistId   = jstr(a, "artistId", artistId);
-        al.coverArtId = jstr(a, "coverArt");
-        al.year       = jint(a, "year");
-        al.songCount  = jint(a, "songCount");
+        Album al = parseAlbumObj(a);
+        if (al.artistId.empty()) al.artistId = artistId;
         result.push_back(std::move(al));
     }
     return result;
@@ -373,18 +401,8 @@ navidrome::SubsonicClientWin::getSongsForAlbum(const std::string& albumId,
 
     std::vector<Song> result;
     for (auto& s : jarr(root, "song")) {
-        Song so;
-        so.id         = jstr(s, "id");
-        so.title      = jstr(s, "title", "Unknown Title");
-        so.artist     = jstr(s, "artist");
-        so.artistId   = jstr(s, "artistId");
-        so.album      = jstr(s, "album");
-        so.albumId    = jstr(s, "albumId", albumId);
-        so.coverArtId = jstr(s, "coverArt");
-        so.suffix     = jstr(s, "suffix");
-        so.track      = jint(s, "track");
-        so.year       = jint(s, "year");
-        so.duration   = jdbl(s, "duration");
+        Song so = parseSongObj(s);
+        if (so.albumId.empty()) so.albumId = albumId;
         result.push_back(std::move(so));
     }
     return result;
@@ -402,21 +420,158 @@ navidrome::SubsonicClientWin::search(const std::string& query, std::string& outE
     SearchResults r;
     for (auto& a : jarr(root, "artist")) {
         Artist ar; ar.id = jstr(a,"id"); ar.name = jstr(a,"name"); ar.coverArtId = jstr(a,"coverArt");
+        ar.starred = !jstr(a,"starred").empty();
         r.artists.push_back(ar);
     }
-    for (auto& a : jarr(root, "album")) {
-        Album al; al.id = jstr(a,"id"); al.name = jstr(a,"name");
-        al.artist = jstr(a,"artist"); al.artistId = jstr(a,"artistId"); al.coverArtId = jstr(a,"coverArt");
-        r.albums.push_back(al);
-    }
-    for (auto& s : jarr(root, "song")) {
-        Song so; so.id = jstr(s,"id"); so.title = jstr(s,"title");
-        so.artist = jstr(s,"artist"); so.album = jstr(s,"album");
-        so.albumId = jstr(s,"albumId"); so.coverArtId = jstr(s,"coverArt");
-        so.track = jint(s,"track"); so.duration = jdbl(s,"duration");
-        r.songs.push_back(so);
-    }
+    for (auto& a : jarr(root, "album"))
+        r.albums.push_back(parseAlbumObj(a));
+    for (auto& s : jarr(root, "song"))
+        r.songs.push_back(parseSongObj(s));
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// Smart lists, favorites, ratings, playlists, scrobbling
+// ---------------------------------------------------------------------------
+
+std::vector<navidrome::Album>
+navidrome::SubsonicClientWin::getAlbumList(AlbumListType type, int size,
+                                            std::string& outError) {
+    std::string params = std::string("type=") + albumListTypeName(type) +
+                         "&size=" + std::to_string(size);
+    std::string body = httpGet(buildURL("getAlbumList2.view", params), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Album> result;
+    for (auto& a : jarr(root, "album"))
+        result.push_back(parseAlbumObj(a));
+    return result;
+}
+
+std::vector<navidrome::Song>
+navidrome::SubsonicClientWin::getStarredSongs(std::string& outError) {
+    std::string body = httpGet(buildURL("getStarred2.view"), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Song> result;
+    for (auto& s : jarr(root, "song")) {
+        Song so = parseSongObj(s);
+        so.starred = true;   // getStarred2 omits the per-item "starred" field
+        result.push_back(std::move(so));
+    }
+    return result;
+}
+
+bool navidrome::SubsonicClientWin::setStarred(bool starred, const std::string& itemId,
+                                               StarKind kind, std::string& outError) {
+    if (itemId.empty()) return false;
+    std::string params = std::string(starParamName(kind)) + "=" + urlEncode(itemId);
+    std::string body = httpGet(buildURL(starred ? "star.view" : "unstar.view", params),
+                               outError);
+    if (body.empty()) return false;
+    return !checkResponse(body, outError).empty();
+}
+
+bool navidrome::SubsonicClientWin::setRating(int rating, const std::string& songId,
+                                              std::string& outError) {
+    if (songId.empty()) return false;
+    if (rating < 0) rating = 0;
+    if (rating > 5) rating = 5;
+    std::string params = "id=" + urlEncode(songId) + "&rating=" + std::to_string(rating);
+    std::string body = httpGet(buildURL("setRating.view", params), outError);
+    if (body.empty()) return false;
+    return !checkResponse(body, outError).empty();
+}
+
+std::vector<navidrome::Playlist>
+navidrome::SubsonicClientWin::getPlaylists(std::string& outError) {
+    std::string body = httpGet(buildURL("getPlaylists.view"), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Playlist> result;
+    for (auto& p : jarr(root, "playlist")) {
+        Playlist pl;
+        pl.id        = jstr(p, "id");
+        pl.name      = jstr(p, "name", "Unnamed playlist");
+        pl.owner     = jstr(p, "owner");
+        pl.songCount = jint(p, "songCount");
+        pl.duration  = jdbl(p, "duration");
+        result.push_back(std::move(pl));
+    }
+    return result;
+}
+
+std::vector<navidrome::Song>
+navidrome::SubsonicClientWin::getPlaylistSongs(const std::string& playlistId,
+                                                std::string& outError) {
+    std::string body = httpGet(buildURL("getPlaylist.view", "id=" + urlEncode(playlistId)),
+                               outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Song> result;
+    for (auto& s : jarr(root, "entry"))
+        result.push_back(parseSongObj(s));
+    return result;
+}
+
+// Subsonic passes track ids on the query string, and both our WinHTTP path
+// buffer (4096 wchars) and typical server URL limits cap how many fit in one
+// request — so the playlist is created with the first chunk and grown with
+// updatePlaylist.view calls.
+bool navidrome::SubsonicClientWin::createPlaylist(const std::string& name,
+                                                   const std::vector<std::string>& songIds,
+                                                   std::string& outError) {
+    if (name.empty() || songIds.empty()) return false;
+    constexpr std::size_t kChunk = 50;
+
+    std::size_t first = (std::min)(kChunk, songIds.size());
+    std::string params = "name=" + urlEncode(name);
+    for (std::size_t i = 0; i < first; ++i) params += "&songId=" + urlEncode(songIds[i]);
+
+    std::string body = httpGet(buildURL("createPlaylist.view", params), outError);
+    if (body.empty()) return false;
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return false;
+
+    if (songIds.size() <= kChunk) return true;
+
+    // Navidrome echoes the created playlist back; without its id the remaining
+    // tracks can't be appended.
+    std::string playlistId;
+    auto created = jarr(root, "playlist");
+    if (!created.empty()) playlistId = jstr(created[0], "id");
+    if (playlistId.empty()) {
+        outError = "Playlist created, but the server returned no id — "
+                   "only the first " + std::to_string(kChunk) + " tracks were added";
+        return false;
+    }
+
+    for (std::size_t i = kChunk; i < songIds.size(); i += kChunk) {
+        std::string upd = "playlistId=" + urlEncode(playlistId);
+        for (std::size_t j = i; j < (std::min)(i + kChunk, songIds.size()); ++j)
+            upd += "&songIdToAdd=" + urlEncode(songIds[j]);
+        std::string updBody = httpGet(buildURL("updatePlaylist.view", upd), outError);
+        if (updBody.empty() || checkResponse(updBody, outError).empty()) return false;
+    }
+    return true;
+}
+
+bool navidrome::SubsonicClientWin::scrobble(const std::string& songId, bool submission,
+                                             std::string& outError) {
+    if (songId.empty()) return false;
+    std::string params = "id=" + urlEncode(songId) +
+                         "&submission=" + (submission ? "true" : "false");
+    std::string body = httpGet(buildURL("scrobble.view", params), outError);
+    if (body.empty()) return false;
+    return !checkResponse(body, outError).empty();
 }
 
 std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
