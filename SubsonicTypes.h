@@ -12,6 +12,7 @@ struct Artist {
     std::string name;
     std::string coverArtId;
     int albumCount = 0;
+    bool starred  = false;
 };
 
 struct Album {
@@ -22,6 +23,7 @@ struct Album {
     std::string coverArtId;
     int year      = 0;
     int songCount = 0;
+    bool starred  = false;
 };
 
 struct Song {
@@ -36,6 +38,17 @@ struct Song {
     int    track    = 0;
     int    year     = 0;
     double duration = 0.0;
+    bool   starred  = false;
+    int    rating   = 0;   // 0 = unrated, else 1-5
+};
+
+// A playlist stored on the server (getPlaylists.view).
+struct Playlist {
+    std::string id;
+    std::string name;
+    std::string owner;
+    int    songCount = 0;
+    double duration  = 0.0;
 };
 
 struct SearchResults {
@@ -43,6 +56,65 @@ struct SearchResults {
     std::vector<Album>  albums;
     std::vector<Song>   songs;
 };
+
+// Item kinds accepted by star.view / unstar.view — Subsonic uses a different
+// query parameter name per kind (id / albumId / artistId).
+enum class StarKind { Song, Album, Artist };
+
+inline const char* starParamName(StarKind kind) {
+    switch (kind) {
+        case StarKind::Album:  return "albumId";
+        case StarKind::Artist: return "artistId";
+        default:               return "id";
+    }
+}
+
+// getAlbumList2.view "type" values we expose as smart nodes in the browser.
+enum class AlbumListType { Newest, Frequent, Recent, Random, Starred };
+
+inline const char* albumListTypeName(AlbumListType type) {
+    switch (type) {
+        case AlbumListType::Frequent: return "frequent";
+        case AlbumListType::Recent:   return "recent";
+        case AlbumListType::Random:   return "random";
+        case AlbumListType::Starred:  return "starred";
+        default:                      return "newest";
+    }
+}
+
+// Extract the song id from a navidrome://track/<id>?... URI. Returns "" when
+// the path isn't one of ours. Shared so the scrobbler on both platforms maps a
+// playing metadb handle back to a Subsonic song id the same way.
+inline std::string trackIdFromURI(const std::string& uri) {
+    static const std::string prefix = "navidrome://track/";
+    if (uri.size() <= prefix.size() || uri.compare(0, prefix.size(), prefix) != 0)
+        return std::string();
+
+    std::string id = uri.substr(prefix.size());
+    size_t q = id.find('?');
+    if (q != std::string::npos) id.erase(q);
+
+    // Percent-decode; ids are opaque server strings that may have been escaped.
+    std::string out;
+    for (size_t i = 0; i < id.size(); ++i) {
+        if (id[i] == '%' && i + 2 < id.size()) {
+            auto hex = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            int hi = hex(id[i + 1]), lo = hex(id[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(id[i]);
+    }
+    return out;
+}
 
 // Parse a multiline custom-headers blob (one "Name: Value" per line) into
 // trimmed, non-empty header lines suitable for HTTP request headers. Blank

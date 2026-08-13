@@ -12,6 +12,10 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 ## Features
 
 - Browse your entire music library: Artists → Albums → Songs
+- **Smart lists** at the top of the tree: ★ Starred, Recently Added, Most Played, Recently Played, Random Albums, and your **server-side playlists**
+- **Scrobbling**: plays are reported back to Navidrome, so play counts, "Recently Played" and any Last.fm / ListenBrainz relay the server has configured stay in sync (toggle in Preferences)
+- **Favorites and ratings** from the right-click menu — Star / Unstar and a 0-5 star rating, stored per-user on the server so they show up in the web UI and on your phone
+- **Send Active Playlist to Navidrome** from the right-click menu — uploads the active foobar2000 playlist under the same name
 - Add albums or artists to playlist in one click (loads all songs automatically)
 - Right-click any row for a **Play Now / Add to Playlist** context menu
 - Double-click a song to play immediately
@@ -129,9 +133,20 @@ Two ways to open the browser:
 
 Then:
 - Expand an artist to see albums, expand an album to see songs
+- Expand a smart list (★ Starred, Recently Added, Most Played, Recently Played, Random Albums) or **Playlists** to browse without digging through artists
 - Select one or more items and click **Add to Playlist** or **Play Now**
 - Double-click a song to play it immediately
 - Use the search field to search across your library
+- Right-click for **Star / Unstar**, a **Rating** submenu (None, 1-5 stars) and **Send Active Playlist to Navidrome**
+
+Any of those actions work on whole albums or artists too — the component expands
+the selection to tracks for you. Ratings apply to songs only, which is what
+Subsonic supports.
+
+Plays are reported to the server as you listen (`scrobble.view`): "now playing"
+when a track starts, then a play once half of it — or four minutes, whichever
+comes first — has been heard. Turn it off with **Report plays to Navidrome
+(scrobbling)** in *Preferences › Tools › Navidrome*.
 
 Tracks land in the playlist as `navidrome://track/<id>?...` URIs. The component resolves these to the current HTTP stream when playback starts, so your playlists keep working if you change credentials or move the server.
 

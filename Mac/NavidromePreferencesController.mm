@@ -9,6 +9,7 @@ namespace navidrome {
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;
     extern cfg_string cfg_custom_headers;
+    extern cfg_var_modern::cfg_bool cfg_scrobble;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +142,7 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
 @property (nonatomic, strong) NSTextField        *statusLabel;
 @property (nonatomic, strong) NSButton           *testButton;
 @property (nonatomic, strong) NSButton           *headersButton;
+@property (nonatomic, strong) NSButton           *scrobbleCheckbox;
 @end
 
 @implementation NavidromePreferencesController
@@ -206,6 +208,16 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
                                         action:@selector(openCustomHeaders:)];
     _headersButton.translatesAutoresizingMaskIntoConstraints = NO;
     [root addSubview:_headersButton];
+
+    // Scrobbling toggle
+    _scrobbleCheckbox = [NSButton checkboxWithTitle:@"Report plays to Navidrome (scrobbling)"
+                                             target:self
+                                             action:@selector(scrobbleToggled:)];
+    _scrobbleCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
+    _scrobbleCheckbox.toolTip = @"Updates play counts and “Recently Played” on the "
+                                 "server, and feeds any Last.fm / ListenBrainz relay it has "
+                                 "configured.";
+    [root addSubview:_scrobbleCheckbox];
 
     // Status label
     _statusLabel = [NSTextField labelWithString:@""];
@@ -273,8 +285,12 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
         [_headersButton.topAnchor constraintEqualToAnchor:_testButton.bottomAnchor constant:vGap],
         [_headersButton.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad + labelW + 8],
 
+        // Scrobbling checkbox
+        [_scrobbleCheckbox.topAnchor constraintEqualToAnchor:_headersButton.bottomAnchor constant:vGap],
+        [_scrobbleCheckbox.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad + labelW + 8],
+
         // Info label
-        [infoLabel.topAnchor constraintEqualToAnchor:_headersButton.bottomAnchor constant:vGap * 2],
+        [infoLabel.topAnchor constraintEqualToAnchor:_scrobbleCheckbox.bottomAnchor constant:vGap * 2],
         [infoLabel.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad],
         [infoLabel.trailingAnchor constraintEqualToAnchor:root.trailingAnchor constant:-pad],
     ]];
@@ -310,6 +326,12 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
     _serverField.stringValue   = [NSString stringWithUTF8String:navidrome::cfg_server_url.get().c_str()];
     _usernameField.stringValue = [NSString stringWithUTF8String:navidrome::cfg_username.get().c_str()];
     _passwordField.stringValue = [NSString stringWithUTF8String:navidrome::cfg_password.get().c_str()];
+    _scrobbleCheckbox.state    = navidrome::cfg_scrobble.get() ? NSControlStateValueOn
+                                                               : NSControlStateValueOff;
+}
+
+- (IBAction)scrobbleToggled:(id)sender {
+    navidrome::cfg_scrobble.set(_scrobbleCheckbox.state == NSControlStateValueOn);
 }
 
 - (void)fieldChanged:(NSNotification *)note {

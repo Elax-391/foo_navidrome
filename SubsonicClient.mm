@@ -55,6 +55,12 @@ static void NavidromeApplyCustomHeaders(NSMutableURLRequest *req) {
 }
 @end
 
+@implementation SubsonicPlaylist
+- (NSString *)description {
+    return [NSString stringWithFormat:@"<SubsonicPlaylist %@ %@>", _playlistId, _name];
+}
+@end
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -73,6 +79,45 @@ static NSString *md5HexString(NSString *input) {
 static NSString *urlEncode(NSString *s) {
     return [s stringByAddingPercentEncodingWithAllowedCharacters:
             [NSCharacterSet URLQueryAllowedCharacterSet]];
+}
+
+// Subsonic's JSON collapses a single-element array into a bare object, so every
+// list field has to be normalized before iterating.
+static NSArray *asArray(id value) {
+    if ([value isKindOfClass:[NSArray class]])      return value;
+    if ([value isKindOfClass:[NSDictionary class]]) return @[value];
+    return @[];
+}
+
+static SubsonicSong *parseSong(NSDictionary *s) {
+    SubsonicSong *song = [[SubsonicSong alloc] init];
+    song.songId     = s[@"id"] ?: @"";
+    song.title      = s[@"title"] ?: @"Unknown Title";
+    song.artist     = s[@"artist"] ?: @"";
+    song.artistId   = s[@"artistId"] ?: @"";
+    song.album      = s[@"album"] ?: @"";
+    song.albumId    = s[@"albumId"] ?: @"";
+    song.track      = [s[@"track"] integerValue];
+    song.year       = [s[@"year"] integerValue];
+    song.duration   = [s[@"duration"] doubleValue];
+    song.coverArtId = s[@"coverArt"] ?: @"";
+    song.suffix     = s[@"suffix"] ?: @"";
+    song.starred    = s[@"starred"] != nil;
+    song.rating     = [s[@"userRating"] integerValue];
+    return song;
+}
+
+static SubsonicAlbum *parseAlbum(NSDictionary *a) {
+    SubsonicAlbum *album = [[SubsonicAlbum alloc] init];
+    album.albumId    = a[@"id"] ?: @"";
+    album.name       = a[@"name"] ?: @"Unknown Album";
+    album.artist     = a[@"artist"] ?: @"";
+    album.artistId   = a[@"artistId"] ?: @"";
+    album.songCount  = [a[@"songCount"] integerValue];
+    album.year       = [a[@"year"] integerValue];
+    album.coverArtId = a[@"coverArt"] ?: @"";
+    album.starred    = a[@"starred"] != nil;
+    return album;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +293,7 @@ static NSString *urlEncode(NSString *s) {
             artist.name      = a[@"name"] ?: @"Unknown Artist";
             artist.albumCount = [a[@"albumCount"] integerValue];
             artist.coverArtId = a[@"coverArt"] ?: @"";
+            artist.starred    = a[@"starred"] != nil;
             [result addObject:artist];
         }
     }
@@ -263,24 +309,9 @@ static NSString *urlEncode(NSString *s) {
 
     NSMutableArray<SubsonicAlbum *> *result = [NSMutableArray array];
     NSDictionary *artistObj = root[@"artist"];
-    NSArray *albums = artistObj[@"album"];
-    if (![albums isKindOfClass:[NSArray class]]) {
-        if ([albums isKindOfClass:[NSDictionary class]]) {
-            albums = @[(NSDictionary *)albums];
-        } else {
-            return result;
-        }
-    }
-
-    for (NSDictionary *a in albums) {
-        SubsonicAlbum *album = [[SubsonicAlbum alloc] init];
-        album.albumId    = a[@"id"] ?: @"";
-        album.name       = a[@"name"] ?: @"Unknown Album";
-        album.artist     = a[@"artist"] ?: @"";
-        album.artistId   = a[@"artistId"] ?: artistId;
-        album.songCount  = [a[@"songCount"] integerValue];
-        album.year       = [a[@"year"] integerValue];
-        album.coverArtId = a[@"coverArt"] ?: @"";
+    for (NSDictionary *a in asArray(artistObj[@"album"])) {
+        SubsonicAlbum *album = parseAlbum(a);
+        if (album.artistId.length == 0) album.artistId = artistId;
         [result addObject:album];
     }
 
@@ -295,28 +326,9 @@ static NSString *urlEncode(NSString *s) {
 
     NSMutableArray<SubsonicSong *> *result = [NSMutableArray array];
     NSDictionary *albumObj = root[@"album"];
-    NSArray *songs = albumObj[@"song"];
-    if (![songs isKindOfClass:[NSArray class]]) {
-        if ([songs isKindOfClass:[NSDictionary class]]) {
-            songs = @[(NSDictionary *)songs];
-        } else {
-            return result;
-        }
-    }
-
-    for (NSDictionary *s in songs) {
-        SubsonicSong *song = [[SubsonicSong alloc] init];
-        song.songId     = s[@"id"] ?: @"";
-        song.title      = s[@"title"] ?: @"Unknown Title";
-        song.artist     = s[@"artist"] ?: @"";
-        song.artistId   = s[@"artistId"] ?: @"";
-        song.album      = s[@"album"] ?: @"";
-        song.albumId    = s[@"albumId"] ?: albumId;
-        song.track      = [s[@"track"] integerValue];
-        song.year       = [s[@"year"] integerValue];
-        song.duration   = [s[@"duration"] doubleValue];
-        song.coverArtId = s[@"coverArt"] ?: @"";
-        song.suffix     = s[@"suffix"] ?: @"";
+    for (NSDictionary *s in asArray(albumObj[@"song"])) {
+        SubsonicSong *song = parseSong(s);
+        if (song.albumId.length == 0) song.albumId = albumId;
         [result addObject:song];
     }
 
@@ -334,50 +346,168 @@ static NSString *urlEncode(NSString *s) {
 
     // Parse artists
     NSMutableArray<SubsonicArtist *> *artists = [NSMutableArray array];
-    NSArray *rawArtists = searchResult[@"artist"];
-    if ([rawArtists isKindOfClass:[NSDictionary class]]) rawArtists = @[rawArtists];
-    for (NSDictionary *a in rawArtists) {
+    for (NSDictionary *a in asArray(searchResult[@"artist"])) {
         SubsonicArtist *artist = [[SubsonicArtist alloc] init];
         artist.artistId  = a[@"id"] ?: @"";
         artist.name      = a[@"name"] ?: @"";
         artist.coverArtId = a[@"coverArt"] ?: @"";
+        artist.starred   = a[@"starred"] != nil;
         [artists addObject:artist];
     }
 
     // Parse albums
     NSMutableArray<SubsonicAlbum *> *albums = [NSMutableArray array];
-    NSArray *rawAlbums = searchResult[@"album"];
-    if ([rawAlbums isKindOfClass:[NSDictionary class]]) rawAlbums = @[rawAlbums];
-    for (NSDictionary *a in rawAlbums) {
-        SubsonicAlbum *album = [[SubsonicAlbum alloc] init];
-        album.albumId    = a[@"id"] ?: @"";
-        album.name       = a[@"name"] ?: @"";
-        album.artist     = a[@"artist"] ?: @"";
-        album.artistId   = a[@"artistId"] ?: @"";
-        album.coverArtId = a[@"coverArt"] ?: @"";
-        [albums addObject:album];
-    }
+    for (NSDictionary *a in asArray(searchResult[@"album"]))
+        [albums addObject:parseAlbum(a)];
 
     // Parse songs
     NSMutableArray<SubsonicSong *> *songs = [NSMutableArray array];
-    NSArray *rawSongs = searchResult[@"song"];
-    if ([rawSongs isKindOfClass:[NSDictionary class]]) rawSongs = @[rawSongs];
-    for (NSDictionary *s in rawSongs) {
-        SubsonicSong *song = [[SubsonicSong alloc] init];
-        song.songId   = s[@"id"] ?: @"";
-        song.title    = s[@"title"] ?: @"";
-        song.artist   = s[@"artist"] ?: @"";
-        song.album    = s[@"album"] ?: @"";
-        song.albumId  = s[@"albumId"] ?: @"";
-        song.track    = [s[@"track"] integerValue];
-        song.year     = [s[@"year"] integerValue];
-        song.duration = [s[@"duration"] doubleValue];
-        song.coverArtId = s[@"coverArt"] ?: @"";
-        song.suffix   = s[@"suffix"] ?: @"";
-        [songs addObject:song];
-    }
+    for (NSDictionary *s in asArray(searchResult[@"song"]))
+        [songs addObject:parseSong(s)];
 
     return @{ @"artists": artists, @"albums": albums, @"songs": songs };
+}
+
+// ---------------------------------------------------------------------------
+// Smart lists, favorites, ratings, playlists, scrobbling
+// ---------------------------------------------------------------------------
+
+- (NSArray<SubsonicAlbum *> *)getAlbumListOfType:(NSString *)type
+                                            size:(NSInteger)size
+                                           error:(NSError **)error {
+    NSString *params = [NSString stringWithFormat:@"type=%@&size=%ld",
+                        urlEncode(type), (long)size];
+    NSURL *url = [self urlForEndpoint:@"getAlbumList2.view" params:params];
+    NSDictionary *root = [self fetchJSON:url error:error];
+    if (!root) return nil;
+
+    NSMutableArray<SubsonicAlbum *> *result = [NSMutableArray array];
+    for (NSDictionary *a in asArray(root[@"albumList2"][@"album"]))
+        [result addObject:parseAlbum(a)];
+    return result;
+}
+
+- (NSArray<SubsonicSong *> *)getStarredSongsWithError:(NSError **)error {
+    NSURL *url = [self urlForEndpoint:@"getStarred2.view" params:@""];
+    NSDictionary *root = [self fetchJSON:url error:error];
+    if (!root) return nil;
+
+    NSMutableArray<SubsonicSong *> *result = [NSMutableArray array];
+    for (NSDictionary *s in asArray(root[@"starred2"][@"song"])) {
+        SubsonicSong *song = parseSong(s);
+        song.starred = YES;   // getStarred2 omits the "starred" field per item
+        [result addObject:song];
+    }
+    return result;
+}
+
+- (BOOL)setStarred:(BOOL)starred
+             forId:(NSString *)itemId
+              kind:(SubsonicStarKind)kind
+             error:(NSError **)error {
+    if (itemId.length == 0) return NO;
+    // Subsonic names the parameter after the item kind.
+    NSString *param = @"id";
+    if (kind == SubsonicStarKindAlbum)  param = @"albumId";
+    if (kind == SubsonicStarKindArtist) param = @"artistId";
+
+    NSString *params = [NSString stringWithFormat:@"%@=%@", param, urlEncode(itemId)];
+    NSURL *url = [self urlForEndpoint:(starred ? @"star.view" : @"unstar.view")
+                               params:params];
+    return [self fetchJSON:url error:error] != nil;
+}
+
+- (BOOL)setRating:(NSInteger)rating forSongId:(NSString *)songId error:(NSError **)error {
+    if (songId.length == 0) return NO;
+    NSString *params = [NSString stringWithFormat:@"id=%@&rating=%ld",
+                        urlEncode(songId), (long)MAX(0, MIN(5, rating))];
+    NSURL *url = [self urlForEndpoint:@"setRating.view" params:params];
+    return [self fetchJSON:url error:error] != nil;
+}
+
+- (NSArray<SubsonicPlaylist *> *)getPlaylistsWithError:(NSError **)error {
+    NSURL *url = [self urlForEndpoint:@"getPlaylists.view" params:@""];
+    NSDictionary *root = [self fetchJSON:url error:error];
+    if (!root) return nil;
+
+    NSMutableArray<SubsonicPlaylist *> *result = [NSMutableArray array];
+    for (NSDictionary *p in asArray(root[@"playlists"][@"playlist"])) {
+        SubsonicPlaylist *pl = [[SubsonicPlaylist alloc] init];
+        pl.playlistId = p[@"id"] ?: @"";
+        pl.name       = p[@"name"] ?: @"Unnamed playlist";
+        pl.owner      = p[@"owner"] ?: @"";
+        pl.songCount  = [p[@"songCount"] integerValue];
+        pl.duration   = [p[@"duration"] doubleValue];
+        [result addObject:pl];
+    }
+    return result;
+}
+
+- (NSArray<SubsonicSong *> *)getPlaylistSongs:(NSString *)playlistId error:(NSError **)error {
+    NSString *params = [NSString stringWithFormat:@"id=%@", urlEncode(playlistId)];
+    NSURL *url = [self urlForEndpoint:@"getPlaylist.view" params:params];
+    NSDictionary *root = [self fetchJSON:url error:error];
+    if (!root) return nil;
+
+    NSMutableArray<SubsonicSong *> *result = [NSMutableArray array];
+    for (NSDictionary *s in asArray(root[@"playlist"][@"entry"]))
+        [result addObject:parseSong(s)];
+    return result;
+}
+
+// Subsonic passes track ids on the query string, so a long playlist would blow
+// past typical server URL limits — create with the first chunk, then grow it
+// with updatePlaylist.view calls.
+- (BOOL)createPlaylistNamed:(NSString *)name
+                    songIds:(NSArray<NSString *> *)songIds
+                      error:(NSError **)error {
+    if (name.length == 0 || songIds.count == 0) return NO;
+    const NSUInteger kChunk = 50;
+
+    NSUInteger first = MIN(kChunk, songIds.count);
+    NSMutableString *params = [NSMutableString stringWithFormat:@"name=%@", urlEncode(name)];
+    for (NSUInteger i = 0; i < first; i++)
+        [params appendFormat:@"&songId=%@", urlEncode(songIds[i])];
+
+    NSDictionary *root = [self fetchJSON:[self urlForEndpoint:@"createPlaylist.view"
+                                                       params:params]
+                                   error:error];
+    if (!root) return NO;
+    if (songIds.count <= kChunk) return YES;
+
+    // Navidrome echoes the created playlist back; without its id the remaining
+    // tracks can't be appended.
+    NSString *playlistId = root[@"playlist"][@"id"];
+    if (playlistId.length == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"SubsonicClient" code:-3 userInfo:@{
+                NSLocalizedDescriptionKey: [NSString stringWithFormat:
+                    @"Playlist created, but the server returned no id — only the "
+                     "first %lu tracks were added", (unsigned long)kChunk]}];
+        }
+        return NO;
+    }
+
+    for (NSUInteger i = kChunk; i < songIds.count; i += kChunk) {
+        NSMutableString *upd = [NSMutableString stringWithFormat:@"playlistId=%@",
+                                urlEncode(playlistId)];
+        for (NSUInteger j = i; j < MIN(i + kChunk, songIds.count); j++)
+            [upd appendFormat:@"&songIdToAdd=%@", urlEncode(songIds[j])];
+        if (![self fetchJSON:[self urlForEndpoint:@"updatePlaylist.view" params:upd]
+                       error:error])
+            return NO;
+    }
+    return YES;
+}
+
+- (BOOL)scrobbleSongId:(NSString *)songId
+            submission:(BOOL)submission
+                 error:(NSError **)error {
+    if (songId.length == 0) return NO;
+    NSString *params = [NSString stringWithFormat:@"id=%@&submission=%@",
+                        urlEncode(songId), submission ? @"true" : @"false"];
+    NSURL *url = [self urlForEndpoint:@"scrobble.view" params:params];
+    return [self fetchJSON:url error:error] != nil;
 }
 
 // ---------------------------------------------------------------------------

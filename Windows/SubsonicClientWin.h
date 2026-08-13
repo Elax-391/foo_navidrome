@@ -34,6 +34,30 @@ public:
     std::vector<Song>    getSongsForAlbum(const std::string& albumId, std::string& outError);
     SearchResults        search(const std::string& query, std::string& outError);
 
+    // Smart lists — getAlbumList2.view. Backs the browser's category nodes.
+    std::vector<Album>   getAlbumList(AlbumListType type, int size, std::string& outError);
+    // Starred tracks (getStarred2.view).
+    std::vector<Song>    getStarredSongs(std::string& outError);
+
+    // Favorites + ratings. Per-user server-side state, so it shows up in the
+    // Navidrome web UI and every other Subsonic client.
+    bool setStarred(bool starred, const std::string& itemId, StarKind kind,
+                    std::string& outError);
+    // rating 1-5; 0 clears the rating.
+    bool setRating(int rating, const std::string& songId, std::string& outError);
+
+    // Server-side playlists
+    std::vector<Playlist> getPlaylists(std::string& outError);
+    std::vector<Song>     getPlaylistSongs(const std::string& playlistId,
+                                           std::string& outError);
+    bool createPlaylist(const std::string& name,
+                        const std::vector<std::string>& songIds,
+                        std::string& outError);
+
+    // Scrobble a play: submission=false marks "now playing", submission=true
+    // registers the play (play count, Last.fm / ListenBrainz relay).
+    bool scrobble(const std::string& songId, bool submission, std::string& outError);
+
     std::string streamURL(const std::string& songId);
     std::string coverArtURL(const std::string& id, int size = 0);
     std::string coverArtURL(const SubsonicRequestContext& context,
