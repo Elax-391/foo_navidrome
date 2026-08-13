@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include "../SubsonicTypes.h"
 
 namespace navidrome {
 
@@ -17,5 +18,7 @@ std::string makeTrackURI(const std::string& id,
                          double duration,
                          const std::string& coverArtId,
                          const std::string& suffix);
+
+std::string makeTrackURI(const Song& song);
 
 } // namespace navidrome

@@ -3,6 +3,7 @@
 // No ObjC, no Windows headers — safe to include anywhere.
 
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace navidrome {
@@ -25,6 +26,7 @@ struct Album {
 };
 
 struct Song {
+    // Legacy fields retained for source compatibility with existing callers.
     std::string id;
     std::string title;
     std::string artist;
@@ -37,6 +39,58 @@ struct Song {
     int    track    = 0;
     int    year     = 0;
     double duration = 0.0;
+
+    // OpenSubsonic Child identity/catalog fields.
+    std::optional<std::string> parent;
+    std::optional<std::string> path;
+    std::optional<std::string> coverArt;
+    std::optional<std::string> contentType;
+    std::optional<std::string> transcodedSuffix;
+    std::optional<std::string> transcodedContentType;
+    std::optional<std::string> starred;
+    std::optional<std::string> played;
+    std::optional<int> playCount;
+
+    // Extended tags. Lists preserve server ordering and multi-value tags.
+    std::optional<std::string> albumArtist;
+    std::optional<std::string> displayArtist;
+    std::optional<std::string> sortName;
+    std::optional<std::string> composer;
+    std::optional<std::string> displayComposer;
+    std::optional<std::string> comment;
+    std::optional<std::string> isrc;
+    std::optional<std::string> musicBrainzId;
+    std::optional<std::string> musicBrainzArtistId;
+    std::optional<std::string> musicBrainzAlbumId;
+    std::optional<std::string> musicBrainzReleaseArtistId;
+    std::optional<std::string> explicitStatus;
+    std::optional<std::string> grouping;
+    std::optional<int> discNumber;
+    std::optional<double> bpm;
+    std::vector<std::string> genres;
+    std::vector<std::string> groupings;
+    std::vector<std::string> moods;
+
+    // Server-reported media facts. Optional values avoid fabricating defaults.
+    std::optional<long long> size;
+    std::optional<int> bitRate;
+    std::optional<int> bitDepth;
+    std::optional<int> samplingRate;
+    std::optional<int> channelCount;
+
+    struct ReplayGain {
+        std::optional<double> trackGain;
+        std::optional<double> albumGain;
+        std::optional<double> trackPeak;
+        std::optional<double> albumPeak;
+        std::optional<double> baseGain;
+        std::optional<double> fallbackGain;
+
+        bool empty() const {
+            return !trackGain && !albumGain && !trackPeak && !albumPeak &&
+                   !baseGain && !fallbackGain;
+        }
+    } replayGain;
 };
 
 struct MusicFolder {

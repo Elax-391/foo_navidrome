@@ -32,6 +32,7 @@ struct NavidromeNode {
     int         track        = 0;
     int         year         = 0;
     double      duration     = 0.0;
+    navidrome::Song metadata;
     bool        childrenLoaded = false;
     bool        isLoading    = false;
     HTREEITEM   hItem        = nullptr;

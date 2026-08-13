@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "SubsonicClientWin.h"
 #include "Localization.h"
+#include "SongJsonParser.h"
 #include <algorithm>
 #include <SDK/cfg_var.h>
 
@@ -360,6 +361,7 @@ std::string navidrome::SubsonicClientWin::httpGet(
     WinHttpCloseHandle(hSess);
     return result;
 }
+
 bool navidrome::SubsonicClientWin::ping(std::string& outError) {
     return ping(snapshot(), outError);
 }
@@ -436,24 +438,7 @@ std::vector<navidrome::Song> navidrome::SubsonicClientWin::getSongsPage(
         return {};
     }
 
-    std::vector<Song> result;
-    for (const auto& s : jarr(root, "song")) {
-        Song song;
-        song.id = jstr(s, "id");
-        song.title = jstr(s, "title", navidrome::l10n::unknownTitle);
-        song.artist = jstr(s, "artist");
-        song.artistId = jstr(s, "artistId");
-        song.album = jstr(s, "album");
-        song.albumId = jstr(s, "albumId");
-        song.coverArtId = jstr(s, "coverArt");
-        song.suffix = jstr(s, "suffix");
-        song.created = jstr(s, "created");
-        song.track = jint(s, "track");
-        song.year = jint(s, "year");
-        song.duration = jdbl(s, "duration");
-        result.push_back(std::move(song));
-    }
-    return result;
+    return parseSongArrayJson(root, "song", {}, navidrome::l10n::unknownTitle);
 }
 
 std::vector<navidrome::Artist> navidrome::SubsonicClientWin::getArtists(std::string& outError) {
@@ -528,24 +513,7 @@ navidrome::SubsonicClientWin::getSongsForAlbum(
     auto root = checkResponse(body, outError);
     if (root.empty()) return {};
 
-    std::vector<Song> result;
-    for (auto& s : jarr(root, "song")) {
-        Song so;
-        so.id         = jstr(s, "id");
-        so.title      = jstr(s, "title", navidrome::l10n::unknownTitle);
-        so.artist     = jstr(s, "artist");
-        so.artistId   = jstr(s, "artistId");
-        so.album      = jstr(s, "album");
-        so.albumId    = jstr(s, "albumId", albumId);
-        so.coverArtId = jstr(s, "coverArt");
-        so.suffix     = jstr(s, "suffix");
-        so.created    = jstr(s, "created");
-        so.track      = jint(s, "track");
-        so.year       = jint(s, "year");
-        so.duration   = jdbl(s, "duration");
-        result.push_back(std::move(so));
-    }
-    return result;
+    return parseSongArrayJson(root, "song", albumId, navidrome::l10n::unknownTitle);
 }
 
 navidrome::SearchResults
@@ -568,13 +536,7 @@ navidrome::SubsonicClientWin::search(const std::string& query, std::string& outE
         al.artist = jstr(a,"artist"); al.artistId = jstr(a,"artistId"); al.coverArtId = jstr(a,"coverArt");
         r.albums.push_back(al);
     }
-    for (auto& s : jarr(root, "song")) {
-        Song so; so.id = jstr(s,"id"); so.title = jstr(s,"title");
-        so.artist = jstr(s,"artist"); so.album = jstr(s,"album");
-        so.albumId = jstr(s,"albumId"); so.coverArtId = jstr(s,"coverArt");
-        so.track = jint(s,"track"); so.duration = jdbl(s,"duration");
-        r.songs.push_back(so);
-    }
+    r.songs = parseSongArrayJson(root, "song", {}, navidrome::l10n::unknownTitle);
     return r;
 }
 

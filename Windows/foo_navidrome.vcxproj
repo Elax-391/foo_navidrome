@@ -156,6 +156,9 @@
     <ClCompile Include="MediaEnrichmentLogic.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="SongJsonParser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="EsLyricBridge.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -172,6 +175,10 @@
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="..\SubsonicTypes.h" />
     <ClInclude Include="SubsonicClientWin.h" />
+    <ClInclude Include="SongMetadataProjection.h" />
+    <ClInclude Include="SongMetadata.h" />
+    <ClInclude Include="SongJsonParser.h" />
+    <ClInclude Include="TrackUriMetadata.h" />
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />
     <ClInclude Include="Localization.h" />

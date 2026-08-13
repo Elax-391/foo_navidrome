@@ -144,6 +144,42 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 
+      - name: Build and run Windows tests
+        shell: pwsh
+        working-directory: foobar2000/foo_navidrome
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sln = "$PWD\"
+          # The projection test links the same SDK static libraries as the DLL.
+          # Build the x64 prerequisite once before compiling the standalone tests;
+          # the release matrix below reuses the resulting incremental outputs.
+          msbuild Windows\foo_navidrome.vcxproj `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:PlatformToolset=v143 `
+            /p:SolutionDir=$sln `
+            /m /nologo /v:minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = @(
+            @{ Project = 'Windows\tests\SongMetadataTests.vcxproj';    Exe = 'SongMetadataTests.exe' },
+            @{ Project = 'Windows\tests\MediaEnrichmentTests.vcxproj'; Exe = 'MediaEnrichmentTests.exe' },
+            @{ Project = 'Windows\tests\LibraryImportTests.vcxproj';   Exe = 'LibraryImportTests.exe' }
+          )
+          foreach ($test in $tests) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($test.Project)
+            $out = "$PWD\test-out\$name\"
+            msbuild $test.Project `
+              /p:Configuration=Release `
+              /p:Platform=x64 `
+              /p:PlatformToolset=v143 `
+              /p:SolutionDir=$sln `
+              /p:OutDir=$out `
+              /m /nologo /v:minimal
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & "$out$($test.Exe)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Build Release (x64 + Win32)
         shell: pwsh
         working-directory: foobar2000/foo_navidrome

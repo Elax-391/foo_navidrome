@@ -5,6 +5,7 @@
 #include "SubsonicClientWin.h"
 #include "NavidromeInputWin.h"
 #include "LibraryImporter.h"
+#include "SongMetadataProjection.h"
 #include <SDK/playlist.h>
 #include <SDK/metadb.h>
 #include <SDK/playable_location.h>
@@ -471,6 +472,7 @@ LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
                 n->track          = s.track;
                 n->year           = s.year;
                 n->duration       = s.duration;
+                n->metadata       = s;
                 n->childrenLoaded = true;
                 payload->nodes.push_back(n);
             }
@@ -667,6 +669,7 @@ LRESULT BrowserWindow::OnLibraryComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
         node->track = song.track;
         node->year = song.year;
         node->duration = song.duration;
+        node->metadata = song;
         node->childrenLoaded = true;
         nodes.push_back(std::move(node));
     }
@@ -821,13 +824,15 @@ void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
             auto n = std::make_shared<NavidromeNode>();
             n->type           = NavidromeNode::Song;
             n->id             = s.id;
-            n->displayName    = s.title + " — " + s.artist;
+            n->displayName    = s.title;
             n->subtitle       = s.artist;
             n->album          = s.album;
             n->coverArtId     = s.coverArtId;
             n->track          = s.track;
             n->year           = s.year;
             n->duration       = s.duration;
+            n->suffix        = s.suffix;
+            n->metadata       = s;
             n->childrenLoaded = true;
             payload->nodes.push_back(n);
         }
@@ -870,6 +875,7 @@ void BrowserWindow::collectSongsDeep(
                 n->suffix = s.suffix;
                 n->year = s.year;
                 n->duration = s.duration; n->childrenLoaded = true;
+                n->metadata = s;
                 out.push_back(n);
             }
         }
@@ -918,9 +924,17 @@ PlaylistAppendReceipt BrowserWindow::enqueueNodes(
         // Enqueue a navidrome://track/<id>?... URI (not the raw HTTP URL) so the
         // input handler resolves the stream — with custom headers — at decode
         // time, and metadata renders without a network round-trip.
-        std::string uri = navidrome::makeTrackURI(node->id, node->displayName,
-            node->subtitle, node->album, node->track, node->year,
-            node->duration, node->coverArtId, node->suffix);
+        navidrome::Song metadata = node->metadata;
+        metadata.id = node->id;
+        if (metadata.title.empty()) metadata.title = node->displayName;
+        if (metadata.artist.empty()) metadata.artist = node->subtitle;
+        if (metadata.album.empty()) metadata.album = node->album;
+        if (metadata.coverArtId.empty()) metadata.coverArtId = node->coverArtId;
+        if (metadata.suffix.empty()) metadata.suffix = node->suffix;
+        if (metadata.track == 0) metadata.track = node->track;
+        if (metadata.year == 0) metadata.year = node->year;
+        if (metadata.duration == 0) metadata.duration = node->duration;
+        std::string uri = navidrome::makeTrackURI(metadata);
         if (uri.empty()) continue;
 
         metadb_handle_ptr handle;
@@ -931,13 +945,11 @@ PlaylistAppendReceipt BrowserWindow::enqueueNodes(
         tracks += handle;
 
         file_info_impl info;
-        if (!node->displayName.empty()) info.meta_set("title",  node->displayName.c_str());
-        if (!node->subtitle.empty())    info.meta_set("artist", node->subtitle.c_str());
-        if (!node->album.empty())       info.meta_set("album",  node->album.c_str());
-        if (node->track > 0)            info.meta_set("tracknumber", pfc::format_int(node->track));
-        if (node->year > 0)             info.meta_set("date",   pfc::format_int(node->year));
-        if (node->duration > 0)         info.set_length(node->duration);
-        hints->add_hint(handle, info, filestats_invalid, true);
+        navidrome::applySongMetadata(info, metadata);
+        auto stats = filestats_invalid;
+        if (!navidrome::isTranscoded(metadata) && metadata.size && *metadata.size >= 0)
+            stats.m_size = static_cast<t_filesize>(*metadata.size);
+        hints->add_hint(handle, info, stats, true);
     }
     hints->on_done();
 

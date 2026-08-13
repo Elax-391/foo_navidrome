@@ -2,11 +2,16 @@
 #include "NavidromeInputWin.h"
 #include "SubsonicClientWin.h"
 #include "MediaEnrichmentLogic.h"
+#include "SongMetadataProjection.h"
+#include "SongMetadata.h"
+#include "TrackUriMetadata.h"
 #include <SDK/input_impl.h>
 #include <SDK/file.h>
+#include <SDK/file_info_impl.h>
 #include <SDK/http_client.h>
 #include <string>
 #include <vector>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -22,9 +27,6 @@
 
 namespace {
 
-constexpr const char* kPrefix    = "navidrome://track/";
-constexpr size_t      kPrefixLen = 18;
-
 class navidrome_input_win : public input_stubs {
 public:
     void open(service_ptr_t<file> /*hint*/, const char* p_path,
@@ -36,16 +38,15 @@ public:
     }
 
     void get_info(file_info& info, abort_callback&) {
-        if (!m_title.empty())  info.meta_set("title",  m_title.c_str());
-        if (!m_artist.empty()) info.meta_set("artist", m_artist.c_str());
-        if (!m_album.empty())  info.meta_set("album",  m_album.c_str());
-        if (m_track > 0)       info.meta_set("tracknumber", pfc::format_int(m_track));
-        if (m_year > 0)        info.meta_set("date",   pfc::format_int(m_year));
-        if (m_duration > 0)    info.set_length(m_duration);
-        if (!m_suffix.empty()) info.info_set("codec", m_suffix.c_str());
+        navidrome::applySongMetadata(info, m_song);
     }
 
-    t_filestats2 get_stats2(uint32_t, abort_callback&) { return filestats2_invalid; }
+    t_filestats2 get_stats2(uint32_t, abort_callback&) {
+        auto stats = filestats2_invalid;
+        if (!navidrome::isTranscoded(m_song) && m_song.size && *m_song.size >= 0)
+            stats.m_size = static_cast<t_filesize>(*m_song.size);
+        return stats;
+    }
 
     void decode_initialize(unsigned p_flags, abort_callback& p_abort) {
         std::string url = navidrome::SubsonicClientWin::get().streamURL(m_song_id);
@@ -68,28 +69,48 @@ public:
         // bytes from httpFile, not from the hint path.
         const char* hint = m_resolved_url.c_str();
         pfc::string8 hintBuf;
-        if (httpFile.is_valid() && !m_suffix.empty()) {
-            hintBuf << "track." << m_suffix.c_str();
+        const std::string decoderSuffix = navidrome::effectiveCodec(m_song);
+        if (httpFile.is_valid() && !decoderSuffix.empty()) {
+            hintBuf << "track." << decoderSuffix.c_str();
             hint = hintBuf.c_str();
         }
 
         input_entry::g_open_for_decoding(m_decoder, httpFile, hint, p_abort, true);
         if (m_decoder.is_empty()) throw exception_io_data();
         m_decoder->initialize(0, p_flags, p_abort);
+        m_decoderInfo.reset();
+        try { m_decoder->get_info(0, m_decoderInfo, p_abort); }
+        catch (...) { m_decoderInfo.reset(); }
+        m_streamSpec.clear();
+        m_streamInfoDirty = false;
     }
 
     bool decode_run(audio_chunk& chunk, abort_callback& abort) {
-        return m_decoder.is_valid() && m_decoder->run(chunk, abort);
+        if (!m_decoder.is_valid() || !m_decoder->run(chunk, abort)) return false;
+        const auto spec = chunk.get_spec();
+        if (spec.is_valid() && spec != m_streamSpec) {
+            m_streamSpec = spec;
+            m_decoderInfo.set_audio_chunk_spec(spec);
+            m_streamInfoDirty = true;
+        }
+        return true;
     }
     void decode_seek(double s, abort_callback& abort) {
         if (m_decoder.is_valid()) m_decoder->seek(s, abort);
     }
     bool decode_can_seek() { return m_decoder.is_valid() && m_decoder->can_seek(); }
     bool decode_get_dynamic_info(file_info& out, double& delta) {
-        return m_decoder.is_valid() && m_decoder->get_dynamic_info(out, delta);
+        if (!m_decoder.is_valid()) return false;
+        const bool changed = m_decoder->get_dynamic_info(out, delta);
+        if (!changed && !m_streamInfoDirty) return false;
+        mergeDynamicInfo(out);
+        m_streamInfoDirty = false;
+        return true;
     }
     bool decode_get_dynamic_info_track(file_info& out, double& delta) {
-        return m_decoder.is_valid() && m_decoder->get_dynamic_info_track(out, delta);
+        if (!m_decoder.is_valid() || !m_decoder->get_dynamic_info_track(out, delta)) return false;
+        mergeDynamicInfo(out);
+        return true;
     }
     void decode_on_idle(abort_callback& abort) {
         if (m_decoder.is_valid()) m_decoder->on_idle(abort);
@@ -100,7 +121,9 @@ public:
 
     static bool g_is_our_content_type(const char*) { return false; }
     static bool g_is_our_path(const char* p_path, const char*) {
-        return p_path != nullptr && strncmp(p_path, kPrefix, kPrefixLen) == 0;
+        return p_path != nullptr &&
+            strncmp(p_path, navidrome::kTrackUriPrefix,
+                    navidrome::kTrackUriPrefixLength) == 0;
     }
     static GUID g_get_guid() {
         static constexpr GUID guid = { 0xa1b2c3d4, 0x1111, 0x2222,
@@ -111,40 +134,25 @@ public:
 
 private:
     void parse_uri(const char* uri) {
-        std::string s = uri;
-        if (s.size() <= kPrefixLen) return;
-        std::string rest = s.substr(kPrefixLen);   // <id>[?query]
-        std::string idPart, query;
-        size_t q = rest.find('?');
-        if (q == std::string::npos) { idPart = rest; }
-        else { idPart = rest.substr(0, q); query = rest.substr(q + 1); }
-        m_song_id = navidrome::uriDecode(idPart);
-
-        size_t pos = 0;
-        while (pos <= query.size() && !query.empty()) {
-            size_t amp = query.find('&', pos);
-            std::string pair = (amp == std::string::npos)
-                ? query.substr(pos) : query.substr(pos, amp - pos);
-            size_t eq = pair.find('=');
-            std::string k = (eq == std::string::npos) ? pair : pair.substr(0, eq);
-            std::string v = (eq == std::string::npos) ? "" : navidrome::uriDecode(pair.substr(eq + 1));
-            if      (k == "title")       m_title  = v;
-            else if (k == "artist")      m_artist = v;
-            else if (k == "album")       m_album  = v;
-            else if (k == "tracknumber") m_track  = atoi(v.c_str());
-            else if (k == "date")        m_year   = atoi(v.c_str());
-            else if (k == "duration")    m_duration = atof(v.c_str());
-            else if (k == "coverArt")    m_cover_art_id = v;
-            else if (k == "suffix")      m_suffix = v;
-            if (amp == std::string::npos) break;
-            pos = amp + 1;
-        }
+        if (navidrome::parseTrackURI(uri, m_song)) m_song_id = m_song.id;
     }
 
-    std::string  m_path, m_song_id, m_cover_art_id, m_title, m_artist, m_album, m_suffix;
+    void mergeDynamicInfo(file_info& out) {
+        file_info_impl merged;
+        navidrome::applySongMetadata(merged, m_song);
+        navidrome::overlayTechnicalInfo(merged, m_decoderInfo);
+        navidrome::overlayTechnicalInfo(merged, out);
+        navidrome::fillReplayGain(merged, m_decoderInfo);
+        navidrome::fillReplayGain(merged, out);
+        out.copy(merged);
+    }
+
+    std::string m_path, m_song_id;
+    navidrome::Song m_song;
     pfc::string8 m_resolved_url;
-    int          m_track = 0, m_year = 0;
-    double       m_duration = 0.0;
+    file_info_impl m_decoderInfo;
+    audio_chunk::spec_t m_streamSpec;
+    bool m_streamInfoDirty = false;
     service_ptr_t<input_decoder> m_decoder;
 };
 
@@ -165,26 +173,13 @@ std::string navidrome::makeTrackURI(const std::string& id,
                                     double duration,
                                     const std::string& coverArtId,
                                     const std::string& suffix) {
-    if (id.empty()) return "";
-    std::string uri = std::string(kPrefix) + navidrome::uriEncode(id);
+    Song song;
+    song.id = id; song.title = title; song.artist = artist; song.album = album;
+    song.track = track; song.year = year; song.duration = duration;
+    song.coverArtId = coverArtId; song.suffix = suffix;
+    return buildTrackURI(song);
+}
 
-    std::vector<std::string> q;
-    if (!title.empty())      q.push_back("title="  + navidrome::uriEncode(title));
-    if (!artist.empty())     q.push_back("artist=" + navidrome::uriEncode(artist));
-    if (!album.empty())      q.push_back("album="  + navidrome::uriEncode(album));
-    if (track > 0)           q.push_back("tracknumber=" + std::to_string(track));
-    if (year > 0)            q.push_back("date="   + std::to_string(year));
-    if (duration > 0) {
-        char b[32];
-        snprintf(b, sizeof(b), "%g", duration);
-        q.push_back(std::string("duration=") + b);
-    }
-    if (!coverArtId.empty()) q.push_back("coverArt=" + navidrome::uriEncode(coverArtId));
-    if (!suffix.empty())     q.push_back("suffix="   + navidrome::uriEncode(suffix));
-
-    for (size_t i = 0; i < q.size(); ++i) {
-        uri += (i == 0 ? "?" : "&");
-        uri += q[i];
-    }
-    return uri;
+std::string navidrome::makeTrackURI(const navidrome::Song& song) {
+    return buildTrackURI(song);
 }

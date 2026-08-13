@@ -253,6 +253,11 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
+          if [ -z "$N8N_WEBHOOK_URL" ] || [ -z "$N8N_WEBHOOK_SECRET" ] || \
+             [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "n8n/Cloudflare release secrets are not configured; skipping foobar2000.org notification."
+            exit 0
+          fi
           ASSET="foo_navidrome_${VERSION}.fb2k-component"
 
           ASSET_URL=$(gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" --json assets \
