@@ -1,3 +1,15 @@
+## [1.5.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.4.1...v1.5.0) (2026-08-13)
+
+
+### Features
+
+* add scrobbling, smart lists, favorites/ratings and server playlists ([c52446c](https://github.com/santiagorod92/foo_navidrome/commit/c52446ca5463d852a41bc5ef7deb3dd87e7d3638))
+
+
+### Bug Fixes
+
+* **build:** resolve the SDK tree in dev-build.sh and stop hiding xcodebuild errors ([11db278](https://github.com/santiagorod92/foo_navidrome/commit/11db27852922f9f0dfa0d33ff9f82eb527a878e1))
+
 ## [1.4.1](https://github.com/santiagorod92/foo_navidrome/compare/v1.4.0...v1.4.1) (2026-08-12)
 
 
