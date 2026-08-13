@@ -58,19 +58,70 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Build
+# 2. Resolve where to build
+#
+# The Xcode project reaches the SDK through relative paths (../foobar2000,
+# ../../pfc), so it only builds from a checkout that has those siblings. When
+# the repo lives somewhere else (the normal case), mirror it into the SDK tree
+# and build the copy. rsync, not a symlink: Xcode canonicalizes symlinked source
+# paths, which breaks the very relative includes we're trying to satisfy.
 # ---------------------------------------------------------------------------
-cd "$ROOT"
+BUILD_ROOT="$ROOT"
+if [ ! -f "$ROOT/../foobar2000/helpers/foobar2000+atl.h" ]; then
+    SDK_TREE="${FOO_NAVIDROME_SDK:-$HOME/.local/share/foo_navidrome-sdk}"
+    if [ ! -f "$SDK_TREE/foobar2000/helpers/foobar2000+atl.h" ]; then
+        cat >&2 <<EOF
+ERROR: foobar2000 SDK not found.
+
+  Checked for siblings of the repo:  $ROOT/../foobar2000, $ROOT/../pfc
+  Checked for an SDK tree at:        $SDK_TREE
+
+Fix it either way:
+  a) Fetch the SDK into the default tree:
+       git clone https://github.com/reupen/foobar2000-sdk-unmodified _sdk
+       mkdir -p "$SDK_TREE"
+       mv _sdk/foobar2000 _sdk/pfc _sdk/libPPUI "$SDK_TREE"/
+     (scripts/win-vm/setup-mac-toolchain.sh does this for you.)
+  b) Point FOO_NAVIDROME_SDK at an existing tree laid out as
+     <tree>/foobar2000/{SDK,helpers,helpers-mac,shared,...} and <tree>/pfc
+EOF
+        exit 1
+    fi
+
+    BUILD_ROOT="$SDK_TREE/foobar2000/foo_navidrome"
+    echo "Building from SDK tree: $BUILD_ROOT"
+    mkdir -p "$BUILD_ROOT"
+    rsync -a --delete \
+        --exclude '.git/' --exclude 'build/' --exclude 'build-win/' \
+        --exclude 'build-win-mac/' \
+        "$ROOT/" "$BUILD_ROOT/"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Build
+#
+# Never pipe xcodebuild through `tail`: compile-command echoes scroll the real
+# `error:` lines off the top, so a failure shows up as a bare "** BUILD FAILED **"
+# with no cause. Full log to a file, filtered summary to the terminal, and the
+# error lines re-printed last on failure (that's where the eye lands).
+# ---------------------------------------------------------------------------
+cd "$BUILD_ROOT"
+LOG=/tmp/xcodebuild-dev.log
 echo "Building (Release)..."
-xcodebuild \
+if xcodebuild \
     -workspace foo_navidrome.xcworkspace \
     -scheme foo_navidrome \
     -configuration Release \
-    build \
-    | tail -n 20
-
-# Check build success (xcodebuild returns 0 on success thanks to set -e)
-echo "Build OK."
+    build > "$LOG" 2>&1; then
+    grep -E "warning:|\*\* BUILD" "$LOG" | grep -v "iOSSimulator" | tail -n 10 || true
+    echo "Build OK. (full log: $LOG)"
+else
+    echo "" >&2
+    echo "BUILD FAILED — full log: $LOG" >&2
+    echo "" >&2
+    grep -B 3 -E "error:|fatal error:" "$LOG" | grep -v "iOSSimulator" | head -n 40 >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Install (delegates to install-macos.sh, which also packages the .fb2k-component)
