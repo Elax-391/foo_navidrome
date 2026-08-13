@@ -18,6 +18,7 @@ void check(bool condition, const char* description) {
 }
 
 int main() {
+    std::cout << "SongMetadataTests starting\n";
     const auto parsed = navidrome::parseSongJson(R"json({
         "id":"song-1","unknown":{"nested":[1,{"value":"ignored"}]},
         "parent":"parent-1","albumId":"album-1",

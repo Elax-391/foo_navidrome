@@ -150,6 +150,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $sln = "$PWD\"
+          # Standalone test executables are emitted under test-out while the
+          # SDK's shared runtime outputs are under x64\Release. Keep that
+          # directory discoverable even when a test is launched outside the
+          # project output directory.
+          $env:PATH = "$PWD\x64\Release;$env:PATH"
           # The projection test links the same SDK static libraries as the DLL.
           # Build the x64 prerequisite once before compiling the standalone tests;
           # the release matrix below reuses the resulting incremental outputs.
@@ -176,8 +181,15 @@ jobs:
               /p:OutDir=$out `
               /m /nologo /v:minimal
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & "$out$($test.Exe)"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $exe = Join-Path $out $test.Exe
+            if (-not (Test-Path -LiteralPath $exe)) {
+              Write-Error "Test executable not found: $exe"
+              exit 1
+            }
+            Write-Host "Running $exe"
+            $process = Start-Process -FilePath $exe -WorkingDirectory $PWD -NoNewWindow -Wait -PassThru
+            Write-Host "$($test.Exe) exited with code $($process.ExitCode)"
+            if ($process.ExitCode -ne 0) { exit $process.ExitCode }
           }
 
       - name: Build Release (x64 + Win32)
