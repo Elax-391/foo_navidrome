@@ -1,3 +1,10 @@
+## [1.1.0](https://github.com/Elax-391/foo_navidrome/compare/v1.0.0...v1.1.0) (2026-08-13)
+
+
+### Features
+
+* **windows:** add complete metadata and ReplayGain support ([1796c6a](https://github.com/Elax-391/foo_navidrome/commit/1796c6aaf1996274e3ef29eb2b7def6d00e0db78))
+
 ## 1.0.0 (2026-08-12)
 
 
