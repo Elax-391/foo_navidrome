@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/Elax-391/foo_navidrome/compare/v1.1.0...v1.1.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **release:** publish complete Windows metadata binaries ([b6fb064](https://github.com/Elax-391/foo_navidrome/commit/b6fb06451fd4c35993912d9988ad6a448c513c4f))
+
 ## [1.1.0](https://github.com/Elax-391/foo_navidrome/compare/v1.0.0...v1.1.0) (2026-08-13)
 
 
