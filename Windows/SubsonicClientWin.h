@@ -56,9 +56,24 @@ public:
     std::vector<Playlist> getPlaylists(std::string& outError);
     std::vector<Song>     getPlaylistSongs(const std::string& playlistId,
                                            std::string& outError);
-    bool createPlaylist(const std::string& name,
-                        const std::vector<std::string>& songIds,
+    // Creates a playlist and returns its id ("" on failure — check outError,
+    // which stays empty when the server just didn't echo an id back).
+    // songIds may be empty to create an empty playlist.
+    std::string createPlaylist(const std::string& name,
+                               const std::vector<std::string>& songIds,
+                               std::string& outError);
+    // Appends songs to an existing playlist (updatePlaylist.view songIdToAdd).
+    bool addToPlaylist(const std::string& playlistId,
+                       const std::vector<std::string>& songIds,
+                       std::string& outError);
+    // Removes entries by their zero-based position. Indexes are applied
+    // highest-first so earlier removals can't shift the later ones.
+    bool removeFromPlaylist(const std::string& playlistId,
+                            const std::vector<int>& indexes,
+                            std::string& outError);
+    bool renamePlaylist(const std::string& playlistId, const std::string& name,
                         std::string& outError);
+    bool deletePlaylist(const std::string& playlistId, std::string& outError);
 
     // Scrobble a play: submission=false marks "now playing", submission=true
     // registers the play (play count, Last.fm / ListenBrainz relay).

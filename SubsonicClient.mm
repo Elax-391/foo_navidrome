@@ -499,12 +499,12 @@ static SubsonicAlbum *parseAlbum(NSDictionary *a) {
 
 // Subsonic passes track ids on the query string, so a long playlist would blow
 // past typical server URL limits — create with the first chunk, then grow it
-// with updatePlaylist.view calls.
-- (BOOL)createPlaylistNamed:(NSString *)name
-                    songIds:(NSArray<NSString *> *)songIds
-                      error:(NSError **)error {
-    if (name.length == 0 || songIds.count == 0) return NO;
-    const NSUInteger kChunk = 50;
+// with updatePlaylist.view calls. Returns the new playlist's id.
+- (NSString *)createPlaylistNamed:(NSString *)name
+                          songIds:(NSArray<NSString *> *)songIds
+                            error:(NSError **)error {
+    if (name.length == 0) return nil;
+    const NSUInteger kChunk = navidrome::kPlaylistChunkSize;
 
     NSUInteger first = MIN(kChunk, songIds.count);
     NSMutableString *params = [NSMutableString stringWithFormat:@"name=%@", urlEncode(name)];
@@ -514,23 +514,41 @@ static SubsonicAlbum *parseAlbum(NSDictionary *a) {
     NSDictionary *root = [self fetchJSON:[self urlForEndpoint:@"createPlaylist.view"
                                                        params:params]
                                    error:error];
-    if (!root) return NO;
-    if (songIds.count <= kChunk) return YES;
+    if (!root) return nil;
 
     // Navidrome echoes the created playlist back; without its id the remaining
-    // tracks can't be appended.
+    // tracks can't be appended (and the caller can't act on the new playlist).
     NSString *playlistId = root[@"playlist"][@"id"];
     if (playlistId.length == 0) {
+        if (songIds.count <= kChunk) {
+            // Everything made it in; we just don't have an id to hand back.
+            // Report success with an empty id rather than a phantom failure.
+            return @"";
+        }
         if (error) {
             *error = [NSError errorWithDomain:@"SubsonicClient" code:-3 userInfo:@{
                 NSLocalizedDescriptionKey: [NSString stringWithFormat:
                     @"Playlist created, but the server returned no id — only the "
                      "first %lu tracks were added", (unsigned long)kChunk]}];
         }
-        return NO;
+        return nil;
     }
 
-    for (NSUInteger i = kChunk; i < songIds.count; i += kChunk) {
+    if (songIds.count <= kChunk) return playlistId;
+
+    NSArray<NSString *> *rest = [songIds subarrayWithRange:
+        NSMakeRange(kChunk, songIds.count - kChunk)];
+    if (![self addSongs:rest toPlaylist:playlistId error:error]) return nil;
+    return playlistId;
+}
+
+- (BOOL)addSongs:(NSArray<NSString *> *)songIds
+      toPlaylist:(NSString *)playlistId
+           error:(NSError **)error {
+    if (playlistId.length == 0 || songIds.count == 0) return NO;
+    const NSUInteger kChunk = navidrome::kPlaylistChunkSize;
+
+    for (NSUInteger i = 0; i < songIds.count; i += kChunk) {
         NSMutableString *upd = [NSMutableString stringWithFormat:@"playlistId=%@",
                                 urlEncode(playlistId)];
         for (NSUInteger j = i; j < MIN(i + kChunk, songIds.count); j++)
@@ -540,6 +558,47 @@ static SubsonicAlbum *parseAlbum(NSDictionary *a) {
             return NO;
     }
     return YES;
+}
+
+// songIndexToRemove refers to a track's position in the playlist as it stands
+// when the request is served, so removals are sent highest-index-first: dropping
+// a later entry never shifts an earlier one.
+- (BOOL)removeIndexes:(NSArray<NSNumber *> *)indexes
+         fromPlaylist:(NSString *)playlistId
+                error:(NSError **)error {
+    if (playlistId.length == 0 || indexes.count == 0) return NO;
+    const NSUInteger kChunk = navidrome::kPlaylistChunkSize;
+
+    NSArray<NSNumber *> *sorted = [indexes sortedArrayUsingComparator:
+        ^NSComparisonResult(NSNumber *a, NSNumber *b) { return [b compare:a]; }];
+
+    for (NSUInteger i = 0; i < sorted.count; i += kChunk) {
+        NSMutableString *upd = [NSMutableString stringWithFormat:@"playlistId=%@",
+                                urlEncode(playlistId)];
+        for (NSUInteger j = i; j < MIN(i + kChunk, sorted.count); j++)
+            [upd appendFormat:@"&songIndexToRemove=%ld", (long)sorted[j].integerValue];
+        if (![self fetchJSON:[self urlForEndpoint:@"updatePlaylist.view" params:upd]
+                       error:error])
+            return NO;
+    }
+    return YES;
+}
+
+- (BOOL)renamePlaylist:(NSString *)playlistId
+                toName:(NSString *)name
+                 error:(NSError **)error {
+    if (playlistId.length == 0 || name.length == 0) return NO;
+    NSString *params = [NSString stringWithFormat:@"playlistId=%@&name=%@",
+                        urlEncode(playlistId), urlEncode(name)];
+    return [self fetchJSON:[self urlForEndpoint:@"updatePlaylist.view" params:params]
+                     error:error] != nil;
+}
+
+- (BOOL)deletePlaylist:(NSString *)playlistId error:(NSError **)error {
+    if (playlistId.length == 0) return NO;
+    NSString *params = [NSString stringWithFormat:@"id=%@", urlEncode(playlistId)];
+    return [self fetchJSON:[self urlForEndpoint:@"deletePlaylist.view" params:params]
+                     error:error] != nil;
 }
 
 - (BOOL)scrobbleSongId:(NSString *)songId

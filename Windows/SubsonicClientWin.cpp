@@ -3,6 +3,7 @@
 #include "MediaEnrichmentLogic.h"
 #include <SDK/cfg_var.h>
 #include <algorithm>
+#include <functional>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
@@ -563,42 +564,99 @@ navidrome::SubsonicClientWin::getPlaylistSongs(const std::string& playlistId,
 // buffer (4096 wchars) and typical server URL limits cap how many fit in one
 // request — so the playlist is created with the first chunk and grown with
 // updatePlaylist.view calls.
-bool navidrome::SubsonicClientWin::createPlaylist(const std::string& name,
-                                                   const std::vector<std::string>& songIds,
-                                                   std::string& outError) {
-    if (name.empty() || songIds.empty()) return false;
-    constexpr std::size_t kChunk = 50;
+std::string navidrome::SubsonicClientWin::createPlaylist(
+        const std::string& name, const std::vector<std::string>& songIds,
+        std::string& outError) {
+    if (name.empty()) return "";
+    constexpr std::size_t kChunk = kPlaylistChunkSize;
 
     std::size_t first = (std::min)(kChunk, songIds.size());
     std::string params = "name=" + urlEncode(name);
     for (std::size_t i = 0; i < first; ++i) params += "&songId=" + urlEncode(songIds[i]);
 
     std::string body = httpGet(buildURL("createPlaylist.view", params), outError);
-    if (body.empty()) return false;
+    if (body.empty()) return "";
     auto root = checkResponse(body, outError);
-    if (root.empty()) return false;
-
-    if (songIds.size() <= kChunk) return true;
+    if (root.empty()) return "";
 
     // Navidrome echoes the created playlist back; without its id the remaining
-    // tracks can't be appended.
+    // tracks can't be appended (and the caller can't act on the new playlist).
     std::string playlistId;
     auto created = jarr(root, "playlist");
     if (!created.empty()) playlistId = jstr(created[0], "id");
+
     if (playlistId.empty()) {
-        outError = "Playlist created, but the server returned no id — "
-                   "only the first " + std::to_string(kChunk) + " tracks were added";
-        return false;
+        if (songIds.size() > kChunk) {
+            outError = "Playlist created, but the server returned no id — "
+                       "only the first " + std::to_string(kChunk) + " tracks were added";
+        }
+        // Everything made it in; we just have no id to hand back. outError stays
+        // empty so the caller can tell this apart from a real failure.
+        return "";
     }
 
-    for (std::size_t i = kChunk; i < songIds.size(); i += kChunk) {
+    if (songIds.size() <= kChunk) return playlistId;
+
+    std::vector<std::string> rest(songIds.begin() + kChunk, songIds.end());
+    if (!addToPlaylist(playlistId, rest, outError)) return "";
+    return playlistId;
+}
+
+bool navidrome::SubsonicClientWin::addToPlaylist(const std::string& playlistId,
+                                                  const std::vector<std::string>& songIds,
+                                                  std::string& outError) {
+    if (playlistId.empty() || songIds.empty()) return false;
+    constexpr std::size_t kChunk = kPlaylistChunkSize;
+
+    for (std::size_t i = 0; i < songIds.size(); i += kChunk) {
         std::string upd = "playlistId=" + urlEncode(playlistId);
         for (std::size_t j = i; j < (std::min)(i + kChunk, songIds.size()); ++j)
             upd += "&songIdToAdd=" + urlEncode(songIds[j]);
-        std::string updBody = httpGet(buildURL("updatePlaylist.view", upd), outError);
-        if (updBody.empty() || checkResponse(updBody, outError).empty()) return false;
+        std::string body = httpGet(buildURL("updatePlaylist.view", upd), outError);
+        if (body.empty() || checkResponse(body, outError).empty()) return false;
     }
     return true;
+}
+
+// songIndexToRemove refers to a track's position in the playlist as it stands
+// when the request is served, so removals are sent highest-index-first: dropping
+// a later entry never shifts an earlier one.
+bool navidrome::SubsonicClientWin::removeFromPlaylist(const std::string& playlistId,
+                                                       const std::vector<int>& indexes,
+                                                       std::string& outError) {
+    if (playlistId.empty() || indexes.empty()) return false;
+    constexpr std::size_t kChunk = kPlaylistChunkSize;
+
+    std::vector<int> sorted = indexes;
+    std::sort(sorted.begin(), sorted.end(), std::greater<int>());
+
+    for (std::size_t i = 0; i < sorted.size(); i += kChunk) {
+        std::string upd = "playlistId=" + urlEncode(playlistId);
+        for (std::size_t j = i; j < (std::min)(i + kChunk, sorted.size()); ++j)
+            upd += "&songIndexToRemove=" + std::to_string(sorted[j]);
+        std::string body = httpGet(buildURL("updatePlaylist.view", upd), outError);
+        if (body.empty() || checkResponse(body, outError).empty()) return false;
+    }
+    return true;
+}
+
+bool navidrome::SubsonicClientWin::renamePlaylist(const std::string& playlistId,
+                                                   const std::string& name,
+                                                   std::string& outError) {
+    if (playlistId.empty() || name.empty()) return false;
+    std::string params = "playlistId=" + urlEncode(playlistId) + "&name=" + urlEncode(name);
+    std::string body = httpGet(buildURL("updatePlaylist.view", params), outError);
+    if (body.empty()) return false;
+    return !checkResponse(body, outError).empty();
+}
+
+bool navidrome::SubsonicClientWin::deletePlaylist(const std::string& playlistId,
+                                                   std::string& outError) {
+    if (playlistId.empty()) return false;
+    std::string body = httpGet(buildURL("deletePlaylist.view", "id=" + urlEncode(playlistId)),
+                               outError);
+    if (body.empty()) return false;
+    return !checkResponse(body, outError).empty();
 }
 
 bool navidrome::SubsonicClientWin::scrobble(const std::string& songId, bool submission,

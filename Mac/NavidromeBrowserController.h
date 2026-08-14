@@ -72,7 +72,8 @@ typedef NS_ENUM(NSInteger, NavidromeCategoryKind) {
 
 @interface NavidromeBrowserController : NSViewController
                                       <NSOutlineViewDataSource,
-                                       NSOutlineViewDelegate>
+                                       NSOutlineViewDelegate,
+                                       NSMenuDelegate>
 @end
 
 // Wraps a fresh NavidromeBrowserController inside an NSWindow and shows it.

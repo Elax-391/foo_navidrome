@@ -15,6 +15,7 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 - **Smart lists** at the top of the tree: ★ Starred, Recently Added, Most Played, Recently Played, Random Albums, **Genres**, and your **server-side playlists**
 - **Scrobbling**: plays are reported back to Navidrome, so play counts, "Recently Played" and any Last.fm / ListenBrainz relay the server has configured stay in sync (toggle in Preferences)
 - **Favorites and ratings** from the right-click menu — Star / Unstar and a 0-5 star rating, stored per-user on the server so they show up in the web UI and on your phone
+- **Manage server playlists** from the right-click menu — add the selection to any existing playlist or a **New Playlist…**, remove tracks, rename, delete. Changes land on the server, so they show up everywhere
 - **Send Active Playlist to Navidrome** from the right-click menu — uploads the active foobar2000 playlist under the same name
 - Add albums or artists to playlist in one click (loads all songs automatically)
 - Right-click any row for a **Play Now / Add to Playlist** context menu
@@ -142,6 +143,19 @@ Then:
 Any of those actions work on whole albums or artists too — the component expands
 the selection to tracks for you. Ratings apply to songs only, which is what
 Subsonic supports.
+
+#### Managing server playlists
+
+The right-click menu edits the playlists stored on Navidrome, not just foobar's
+local ones:
+
+- **Add to Navidrome Playlist ▸** lists every playlist on the server; pick one to
+  append the selection to it, or **New Playlist…** to create one from the
+  selection.
+- **Remove from Playlist** works on song rows sitting inside a **Playlists ›
+  <name>** node — that's where a track has a position on the server to remove.
+- **Rename Playlist…** / **Delete Playlist…** act on a selected playlist row.
+  Deleting removes it for every client; the tracks themselves are untouched.
 
 Plays are reported to the server as you listen (`scrobble.view`): "now playing"
 when a track starts, then a play once half of it — or four minutes, whichever

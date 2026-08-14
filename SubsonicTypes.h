@@ -2,6 +2,7 @@
 // Pure C++ types shared between all platform implementations.
 // No ObjC, no Windows headers — safe to include anywhere.
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -89,6 +90,12 @@ inline const char* albumListTypeName(AlbumListType type) {
         default:                      return "newest";
     }
 }
+
+// Subsonic passes ids on the query string, so a long playlist would blow past
+// typical server URL limits (and the Windows client's 4096-wchar WinHttpCrackUrl
+// path buffer). Every playlist mutation that takes a list is sent in chunks of
+// this many ids.
+constexpr std::size_t kPlaylistChunkSize = 50;
 
 // Extract the song id from a navidrome://track/<id>?... URI. Returns "" when
 // the path isn't one of ours. Shared so the scrobbler on both platforms maps a

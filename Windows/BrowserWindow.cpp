@@ -7,6 +7,7 @@
 #include <SDK/playable_location.h>
 #include <SDK/playback_control.h>
 #include <commctrl.h>
+#include <algorithm>
 #pragma comment(lib, "comctl32.lib")
 
 static std::wstring u8ToWide(const std::string& s) {
@@ -26,6 +27,126 @@ static std::string wToU8(const std::wstring& w) {
     if (!s.empty() && s.back() == 0) s.pop_back();
     return s;
 }
+
+// ---------------------------------------------------------------------------
+// Modal single-line text prompt
+//
+// Win32 has no InputBox, and a .rc dialog template would drag a resource script
+// into a project that deliberately builds without one — so this is a plain
+// popup window driven by its own message pump.
+// ---------------------------------------------------------------------------
+namespace {
+
+class TextPromptWindow : public CWindowImpl<TextPromptWindow> {
+public:
+    DECLARE_WND_CLASS(L"foo_navidrome_PromptWnd")
+
+    // Returns true and fills `out` when the user confirms.
+    static bool run(HWND owner, const wchar_t* title, const wchar_t* label,
+                    const std::wstring& initial, std::wstring& out) {
+        TextPromptWindow w;
+        w.m_label = label;
+        w.m_value = initial;
+
+        w.Create(owner, CWindow::rcDefault, title,
+                 WS_POPUP | WS_CAPTION | WS_SYSMENU, WS_EX_DLGMODALFRAME);
+        if (!w.IsWindow()) return false;
+
+        // Center on the owner (or the screen when there isn't one).
+        RECT rcOwner{};
+        if (owner && ::GetWindowRect(owner, &rcOwner)) {
+            int x = rcOwner.left + ((rcOwner.right - rcOwner.left) - 360) / 2;
+            int y = rcOwner.top + ((rcOwner.bottom - rcOwner.top) - 140) / 2;
+            w.SetWindowPos(nullptr, x, y, 360, 140, SWP_NOZORDER);
+        } else {
+            w.SetWindowPos(nullptr, 0, 0, 360, 140, SWP_NOMOVE | SWP_NOZORDER);
+        }
+
+        if (owner) ::EnableWindow(owner, FALSE);
+        w.ShowWindow(SW_SHOW);
+        w.m_edit.SetFocus();
+
+        MSG msg;
+        while (!w.m_done) {
+            BOOL got = ::GetMessageW(&msg, nullptr, 0, 0);
+            if (got == 0) {
+                // WM_QUIT: foobar is shutting down. Put it back so the app's own
+                // message loop still sees it, and abandon the prompt.
+                ::PostQuitMessage(static_cast<int>(msg.wParam));
+                break;
+            }
+            if (got == -1) break;   // message queue error
+            if (!::IsDialogMessageW(w.m_hWnd, &msg)) {
+                ::TranslateMessage(&msg);
+                ::DispatchMessageW(&msg);
+            }
+        }
+        if (owner) { ::EnableWindow(owner, TRUE); ::SetForegroundWindow(owner); }
+        if (w.IsWindow()) w.DestroyWindow();
+
+        out = w.m_value;
+        return w.m_accepted;
+    }
+
+    BEGIN_MSG_MAP(TextPromptWindow)
+        MSG_WM_CREATE(OnCreate)
+        MSG_WM_CLOSE(OnClose)
+        COMMAND_ID_HANDLER_EX(IDOK,     OnOk)
+        COMMAND_ID_HANDLER_EX(IDCANCEL, OnCancel)
+    END_MSG_MAP()
+
+private:
+    enum { IDC_PROMPT_LABEL = 4001, IDC_PROMPT_EDIT = 4002 };
+
+    LRESULT OnCreate(LPCREATESTRUCT) {
+        HFONT f = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        auto setFont = [&](HWND h) { SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0); };
+
+        setFont(CreateWindowW(L"STATIC", m_label.c_str(), WS_CHILD | WS_VISIBLE,
+            12, 12, 330, 18, *this,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PROMPT_LABEL)), nullptr, nullptr));
+
+        m_edit.Create(*this, CWindow::rcDefault, nullptr,
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
+            0, IDC_PROMPT_EDIT);
+        m_edit.SetWindowPos(nullptr, 12, 34, 330, 22, SWP_NOZORDER);
+        m_edit.SetFont(f);
+        m_edit.SetWindowText(m_value.c_str());
+        m_edit.SetSel(0, -1);
+
+        // BS_DEFPUSHBUTTON is what makes IsDialogMessage translate Enter to IDOK.
+        setFont(CreateWindowW(L"BUTTON", L"OK",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+            180, 68, 76, 26, *this,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), nullptr, nullptr));
+        setFont(CreateWindowW(L"BUTTON", L"Cancel",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            264, 68, 76, 26, *this,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), nullptr, nullptr));
+        return 0;
+    }
+
+    void OnOk(UINT, int, HWND) {
+        int len = m_edit.GetWindowTextLength();
+        std::wstring buf(static_cast<std::size_t>(len) + 1, L'\0');
+        m_edit.GetWindowText(&buf[0], len + 1);
+        buf.resize(static_cast<std::size_t>(len));
+        m_value    = buf;
+        m_accepted = true;
+        m_done     = true;
+    }
+
+    void OnCancel(UINT, int, HWND) { m_done = true; }
+    void OnClose()                 { m_done = true; }
+
+    CEdit        m_edit;
+    std::wstring m_label;
+    std::wstring m_value;
+    bool         m_accepted = false;
+    bool         m_done     = false;
+};
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Singleton
@@ -160,6 +281,9 @@ void BrowserWindow::loadArtists() {
     m_tree.DeleteAllItems();
     m_nodeMap.clear();
     m_rootNodes.clear();
+    // Warm the cache the "Add to Navidrome Playlist" submenu reads from, so the
+    // first right-click already lists the server's playlists.
+    refreshServerPlaylists();
 
     std::thread([this]() {
         auto* payload = new LoadedPayload{};
@@ -289,6 +413,33 @@ LRESULT BrowserWindow::OnNavidromeChildren(UINT, WPARAM wParam, LPARAM, BOOL&) {
     populateChildren(payload);
     delete payload;
     return 0;
+}
+
+LRESULT BrowserWindow::OnNavidromePlaylists(UINT, WPARAM wParam, LPARAM, BOOL&) {
+    auto* lists = reinterpret_cast<std::vector<navidrome::Playlist>*>(wParam);
+    m_playlistsLoading = false;
+    if (lists) { m_serverPlaylists = std::move(*lists); delete lists; }
+    return 0;
+}
+
+// Refresh the cached playlist list used by the "Add to Navidrome Playlist"
+// submenu. Cheap enough to re-run after every mutation.
+void BrowserWindow::refreshServerPlaylists() {
+    if (m_playlistsLoading || !navidrome::SubsonicClientWin::get().isConfigured()) return;
+    m_playlistsLoading = true;
+
+    std::thread([this]() {
+        std::string err;
+        auto lists = navidrome::SubsonicClientWin::get().getPlaylists(err);
+        // A null payload still gets posted on failure so the UI thread clears
+        // m_playlistsLoading — and keeps the previous cache rather than blanking
+        // the submenu over one bad request.
+        auto* payload = err.empty()
+            ? new std::vector<navidrome::Playlist>(std::move(lists))
+            : nullptr;
+        if (!PostMessage(WM_NAVIDROME_PLAYLISTS, reinterpret_cast<WPARAM>(payload), 0))
+            delete payload;   // window already gone
+    }).detach();
 }
 
 void BrowserWindow::populateRoot(LoadedPayload* payload) {
@@ -535,11 +686,41 @@ void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
     // doesn't destroy it out from under TrackPopupMenu.
     rating.Detach();
 
+    // Server playlists. The submenu is built from the cached list, so opening
+    // the menu never blocks on the network.
+    menu.AppendMenu(MF_SEPARATOR);
+    CMenu playlists;
+    playlists.CreatePopupMenu();
+    const std::size_t shown = (std::min)(m_serverPlaylists.size(), kMaxPlaylistMenuEntries);
+    for (std::size_t i = 0; i < shown; ++i) {
+        playlists.AppendMenu(MF_STRING,
+            static_cast<UINT_PTR>(IDC_PLAYLIST_FIRST + i),
+            u8ToWide(m_serverPlaylists[i].name).c_str());
+    }
+    if (shown == 0) {
+        playlists.AppendMenu(MF_STRING | MF_GRAYED, static_cast<UINT_PTR>(0),
+            m_playlistsLoading ? L"Loading…" : L"No playlists on server");
+    }
+    playlists.AppendMenu(MF_SEPARATOR);
+    playlists.AppendMenu(MF_STRING, IDC_NEW_PLAYLIST, L"New Playlist…");
+    menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(playlists.m_hMenu),
+                    L"Add to Navidrome Playlist");
+    // The parent menu owns the submenu now; detach so CMenu's destructor doesn't
+    // destroy it out from under TrackPopupMenu.
+    playlists.Detach();
+
+    menu.AppendMenu(MF_STRING, IDC_REMOVE_FROM_PL,  L"Remove from Playlist");
+    menu.AppendMenu(MF_STRING, IDC_RENAME_PLAYLIST, L"Rename Playlist…");
+    menu.AppendMenu(MF_STRING, IDC_DELETE_PLAYLIST, L"Delete Playlist…");
+
     menu.AppendMenu(MF_SEPARATOR);
     menu.AppendMenu(MF_STRING, IDC_SEND_PLAYLIST,
                     L"Send Active Playlist to Navidrome");
 
     menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, *this);
+
+    // A stale cache is only visible once — refresh for the next open.
+    refreshServerPlaylists();
 }
 
 // ---------------------------------------------------------------------------
@@ -643,11 +824,14 @@ void BrowserWindow::OnSendActivePlaylist(UINT, int, HWND) {
 
     std::thread([this, name, songIds, skipped]() {
         std::string err;
-        bool ok = navidrome::SubsonicClientWin::get().createPlaylist(name, songIds, err);
+        navidrome::SubsonicClientWin::get().createPlaylist(name, songIds, err);
+        // The id is only needed to grow the playlist further; an empty id with
+        // no error still means the upload succeeded.
+        bool ok = err.empty();
         fb2k::inMainThread([this, name, songIds, skipped, ok, err]() {
             if (!IsWindow()) return;
             if (!ok) {
-                setStatus("Upload failed: " + (err.empty() ? "unknown error" : err));
+                setStatus("Upload failed: " + err);
                 return;
             }
             std::string msg = "Sent \"" + name + "\" (" +
@@ -655,6 +839,238 @@ void BrowserWindow::OnSendActivePlaylist(UINT, int, HWND) {
             if (skipped > 0)
                 msg += ", " + std::to_string(skipped) + " non-Navidrome skipped";
             setStatus(msg + ")");
+            invalidatePlaylistsCategory();
+            refreshServerPlaylists();
+        });
+    }).detach();
+}
+
+// ---------------------------------------------------------------------------
+// Server playlist management
+//
+// Everything here works on song ids, so the selection is first resolved down to
+// songs the same way the Add/Play actions resolve it.
+// ---------------------------------------------------------------------------
+
+// Synchronous — call from a background thread (collectSongsDeep hits the API for
+// nodes that haven't been expanded yet). `nodes` must have been captured on the
+// UI thread; reading the tree control from here would be a cross-thread call.
+std::vector<std::string> BrowserWindow::collectSongIdsDeep(
+        const std::vector<std::shared_ptr<NavidromeNode>>& nodes) {
+    std::vector<std::shared_ptr<NavidromeNode>> songs;
+    for (auto& n : nodes) collectSongsDeep(n, songs);
+
+    std::vector<std::string> ids;
+    ids.reserve(songs.size());
+    for (auto& s : songs)
+        if (!s->id.empty()) ids.push_back(s->id);
+    return ids;
+}
+
+std::shared_ptr<NavidromeNode> BrowserWindow::singleSelectedPlaylist() {
+    auto sel = selectedNodes();
+    if (sel.size() != 1 || sel[0]->type != NavidromeNode::Playlist) return nullptr;
+    return sel[0];
+}
+
+// Drop a node's cached children (and their tree items) so the next expand
+// refetches from the server.
+void BrowserWindow::reloadNodeChildren(const std::shared_ptr<NavidromeNode>& node) {
+    if (!node || !node->hItem) return;
+
+    m_tree.Expand(node->hItem, TVE_COLLAPSE);
+    HTREEITEM child = m_tree.GetChildItem(node->hItem);
+    while (child) {
+        HTREEITEM next = m_tree.GetNextSiblingItem(child);
+        m_nodeMap.erase(child);
+        m_tree.DeleteItem(child);
+        child = next;
+    }
+    node->children.clear();
+    node->childrenLoaded = false;
+    node->isLoading      = false;
+
+    // Restore the expand arrow the delete may have cleared.
+    TVITEM it    = {};
+    it.mask      = TVIF_CHILDREN;
+    it.hItem     = node->hItem;
+    it.cChildren = 1;
+    m_tree.SetItem(&it);
+}
+
+void BrowserWindow::invalidatePlaylistNode(const std::string& playlistId) {
+    for (auto& root : m_rootNodes) {
+        if (root->type != NavidromeNode::Category ||
+            root->category != NavidromeNode::CatPlaylists) continue;
+        for (auto& pl : root->children) {
+            if (pl->id != playlistId) continue;
+            reloadNodeChildren(pl);
+            return;
+        }
+    }
+}
+
+void BrowserWindow::invalidatePlaylistsCategory() {
+    for (auto& root : m_rootNodes) {
+        if (root->type == NavidromeNode::Category &&
+            root->category == NavidromeNode::CatPlaylists) {
+            reloadNodeChildren(root);
+            return;
+        }
+    }
+}
+
+void BrowserWindow::OnAddToServerPlaylist(UINT, int id, HWND) {
+    const std::size_t idx = static_cast<std::size_t>(id - IDC_PLAYLIST_FIRST);
+    if (idx >= m_serverPlaylists.size()) return;
+    const std::string playlistId = m_serverPlaylists[idx].id;
+    const std::string name       = m_serverPlaylists[idx].name;
+
+    auto selected = selectedNodes();
+    if (selected.empty()) { setStatus("Select at least one item"); return; }
+
+    setStatus("Resolving tracks…");
+    std::thread([this, playlistId, name, selected]() {
+        auto ids = collectSongIdsDeep(selected);
+        if (ids.empty()) {
+            fb2k::inMainThread([this]() {
+                if (IsWindow()) setStatus("No tracks in the selection");
+            });
+            return;
+        }
+        std::string err;
+        bool ok = navidrome::SubsonicClientWin::get().addToPlaylist(playlistId, ids, err);
+        fb2k::inMainThread([this, playlistId, name, ids, ok, err]() {
+            if (!IsWindow()) return;
+            setStatus(ok ? "Added " + std::to_string(ids.size()) + " track(s) to \"" + name + "\""
+                         : "Failed: " + (err.empty() ? "unknown error" : err));
+            if (ok) { invalidatePlaylistNode(playlistId); refreshServerPlaylists(); }
+        });
+    }).detach();
+}
+
+void BrowserWindow::OnNewServerPlaylist(UINT, int, HWND) {
+    auto selected = selectedNodes();
+    if (selected.empty()) { setStatus("Select at least one item"); return; }
+
+    std::wstring name;
+    if (!TextPromptWindow::run(*this, L"New Navidrome playlist",
+                               L"Name for the new playlist:", L"", name))
+        return;
+    std::string nameU8 = wToU8(name);
+    if (nameU8.empty()) return;
+
+    setStatus("Resolving tracks…");
+    std::thread([this, nameU8, selected]() {
+        auto ids = collectSongIdsDeep(selected);
+        std::string err;
+        std::string newId =
+            navidrome::SubsonicClientWin::get().createPlaylist(nameU8, ids, err);
+        // An empty id with no error means the server just didn't echo one back.
+        bool ok = err.empty();
+        fb2k::inMainThread([this, nameU8, ids, ok, err]() {
+            if (!IsWindow()) return;
+            setStatus(ok ? "Created \"" + nameU8 + "\" (" +
+                           std::to_string(ids.size()) + " track(s))"
+                         : "Failed: " + err);
+            if (ok) { invalidatePlaylistsCategory(); refreshServerPlaylists(); }
+        });
+    }).detach();
+}
+
+// Only meaningful for song rows sitting directly under a playlist node — that's
+// where a track has a position for songIndexToRemove to refer to.
+void BrowserWindow::OnRemoveFromPlaylist(UINT, int, HWND) {
+    std::shared_ptr<NavidromeNode> playlist;
+    std::vector<int> indexes;
+
+    for (auto& n : selectedNodes()) {
+        if (n->type != NavidromeNode::Song || !n->hItem) continue;
+        auto parent = nodeForItem(m_tree.GetParentItem(n->hItem));
+        if (!parent || parent->type != NavidromeNode::Playlist) continue;
+        // Mixing playlists in one request isn't expressible — the endpoint takes
+        // a single playlistId.
+        if (playlist && playlist->id != parent->id) continue;
+        playlist = parent;
+        for (std::size_t i = 0; i < parent->children.size(); ++i) {
+            if (parent->children[i] == n) { indexes.push_back(static_cast<int>(i)); break; }
+        }
+    }
+
+    if (!playlist || indexes.empty()) {
+        setStatus("Select tracks inside a server playlist first");
+        return;
+    }
+
+    const std::string playlistId = playlist->id;
+    const std::string name       = playlist->displayName;
+    setStatus("Removing…");
+    std::thread([this, playlistId, name, indexes]() {
+        std::string err;
+        bool ok = navidrome::SubsonicClientWin::get()
+                      .removeFromPlaylist(playlistId, indexes, err);
+        fb2k::inMainThread([this, playlistId, name, indexes, ok, err]() {
+            if (!IsWindow()) return;
+            setStatus(ok ? "Removed " + std::to_string(indexes.size()) +
+                           " track(s) from \"" + name + "\""
+                         : "Failed: " + (err.empty() ? "unknown error" : err));
+            if (ok) invalidatePlaylistNode(playlistId);
+        });
+    }).detach();
+}
+
+void BrowserWindow::OnRenamePlaylist(UINT, int, HWND) {
+    auto playlist = singleSelectedPlaylist();
+    if (!playlist) { setStatus("Select a single server playlist"); return; }
+
+    std::wstring name;
+    if (!TextPromptWindow::run(*this, L"Rename playlist", L"New name:",
+                               u8ToWide(playlist->displayName), name))
+        return;
+    std::string nameU8 = wToU8(name);
+    if (nameU8.empty() || nameU8 == playlist->displayName) return;
+
+    const std::string playlistId = playlist->id;
+    std::thread([this, playlist, playlistId, nameU8]() {
+        std::string err;
+        bool ok = navidrome::SubsonicClientWin::get()
+                      .renamePlaylist(playlistId, nameU8, err);
+        fb2k::inMainThread([this, playlist, nameU8, ok, err]() {
+            if (!IsWindow()) return;
+            if (ok) {
+                playlist->displayName = nameU8;
+                refreshLabel(playlist);
+                setStatus("Renamed to \"" + nameU8 + "\"");
+                refreshServerPlaylists();
+            } else {
+                setStatus("Failed: " + (err.empty() ? "unknown error" : err));
+            }
+        });
+    }).detach();
+}
+
+void BrowserWindow::OnDeletePlaylist(UINT, int, HWND) {
+    auto playlist = singleSelectedPlaylist();
+    if (!playlist) { setStatus("Select a single server playlist"); return; }
+
+    std::wstring prompt = L"Delete \"" + u8ToWide(playlist->displayName) +
+                          L"\" from the server?\r\n\r\n"
+                          L"The playlist is removed for every client. "
+                          L"The tracks themselves are not touched.";
+    if (MessageBoxW(prompt.c_str(), L"Delete playlist",
+                    MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    const std::string playlistId = playlist->id;
+    const std::string name       = playlist->displayName;
+    std::thread([this, playlistId, name]() {
+        std::string err;
+        bool ok = navidrome::SubsonicClientWin::get().deletePlaylist(playlistId, err);
+        fb2k::inMainThread([this, name, ok, err]() {
+            if (!IsWindow()) return;
+            setStatus(ok ? "Deleted \"" + name + "\""
+                         : "Failed: " + (err.empty() ? "unknown error" : err));
+            if (ok) { invalidatePlaylistsCategory(); refreshServerPlaylists(); }
         });
     }).detach();
 }

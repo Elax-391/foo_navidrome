@@ -118,10 +118,24 @@ typedef NS_ENUM(NSInteger, SubsonicStarKind) {
 // Server-side playlists
 - (NSArray<SubsonicPlaylist *> *)getPlaylistsWithError:(NSError **)error;
 - (NSArray<SubsonicSong *> *)getPlaylistSongs:(NSString *)playlistId error:(NSError **)error;
-// Creates a new playlist and returns YES on success. Songs are sent in order.
-- (BOOL)createPlaylistNamed:(NSString *)name
-                    songIds:(NSArray<NSString *> *)songIds
-                      error:(NSError **)error;
+// Creates a new playlist; songs are sent in order. Returns the new playlist's
+// id, or nil on failure. songIds may be empty to create an empty playlist.
+- (NSString *)createPlaylistNamed:(NSString *)name
+                          songIds:(NSArray<NSString *> *)songIds
+                            error:(NSError **)error;
+// Appends songs to an existing playlist (updatePlaylist.view songIdToAdd).
+- (BOOL)addSongs:(NSArray<NSString *> *)songIds
+      toPlaylist:(NSString *)playlistId
+           error:(NSError **)error;
+// Removes entries by their zero-based position in the playlist. Indexes are
+// applied highest-first so earlier removals can't shift the later ones.
+- (BOOL)removeIndexes:(NSArray<NSNumber *> *)indexes
+         fromPlaylist:(NSString *)playlistId
+                error:(NSError **)error;
+- (BOOL)renamePlaylist:(NSString *)playlistId
+                toName:(NSString *)name
+                 error:(NSError **)error;
+- (BOOL)deletePlaylist:(NSString *)playlistId error:(NSError **)error;
 
 // Scrobble a play to the server: submission=NO marks "now playing",
 // submission=YES registers the play (play count, Last.fm / ListenBrainz).
