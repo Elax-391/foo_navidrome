@@ -152,9 +152,14 @@ std::optional<std::string> memberValue(const std::string& object, const char* na
     return std::nullopt;
 }
 
-std::optional<std::string> nestedMemberValue(const std::string& json,
-                                             const std::string& name) {
-    size_t offset = 0;
+struct LocatedValue {
+    std::string value;
+    size_t end = 0;
+};
+
+std::optional<LocatedValue> locateNestedMemberValue(
+        const std::string& json, const std::string& name, size_t startOffset = 0) {
+    size_t offset = startOffset;
     while (offset < json.size()) {
         if (json[offset] != '"') {
             ++offset;
@@ -173,11 +178,17 @@ std::optional<std::string> nestedMemberValue(const std::string& json,
             continue;
         }
 
-        const size_t start = valueOffset;
+        const size_t valueStart = valueOffset;
         if (!skipValue(json, valueOffset)) return std::nullopt;
-        return json.substr(start, valueOffset - start);
+        return LocatedValue{json.substr(valueStart, valueOffset - valueStart), valueOffset};
     }
     return std::nullopt;
+}
+
+std::optional<std::string> nestedMemberValue(const std::string& json,
+                                             const std::string& name) {
+    const auto located = locateNestedMemberValue(json, name);
+    return located ? std::optional<std::string>(located->value) : std::nullopt;
 }
 
 std::optional<std::string> stringMember(const std::string& object, const char* name) {
@@ -208,6 +219,16 @@ std::optional<int> intMember(const std::string& object, const char* name) {
         *value < (std::numeric_limits<int>::min)() ||
         *value > (std::numeric_limits<int>::max)()) return std::nullopt;
     return static_cast<int>(*value);
+}
+
+std::optional<bool> boolMember(const std::string& object, const char* name) {
+    const auto raw = memberValue(object, name);
+    if (!raw) return std::nullopt;
+    size_t offset = 0;
+    skipSpace(*raw, offset);
+    if (raw->compare(offset, 4, "true") == 0) return true;
+    if (raw->compare(offset, 5, "false") == 0) return false;
+    return std::nullopt;
 }
 
 std::optional<long long> int64Member(const std::string& object, const char* name) {
@@ -251,12 +272,208 @@ std::vector<std::string> metadataList(const std::string& object, const char* nam
     return result;
 }
 
+std::vector<int> integerList(const std::string& object, const char* name) {
+    std::vector<int> result;
+    const auto raw = memberValue(object, name);
+    if (!raw) return result;
+    size_t offset = 0;
+    skipSpace(*raw, offset);
+    if (offset >= raw->size() || (*raw)[offset++] != '[') return result;
+    while (offset < raw->size()) {
+        skipSpace(*raw, offset);
+        if (offset >= raw->size() || (*raw)[offset] == ']') break;
+        const size_t start = offset;
+        if (!skipValue(*raw, offset)) break;
+        const std::string item = raw->substr(start, offset - start);
+        char* end = nullptr;
+        errno = 0;
+        const long value = std::strtol(item.c_str(), &end, 10);
+        while (end && *end && std::isspace(static_cast<unsigned char>(*end))) ++end;
+        if (errno != ERANGE && end && end != item.c_str() && *end == '\0' && value >= 0 &&
+            value <= (std::numeric_limits<int>::max)()) {
+            result.push_back(static_cast<int>(value));
+        }
+        skipSpace(*raw, offset);
+        if (offset < raw->size() && (*raw)[offset] == ',') ++offset;
+    }
+    return result;
+}
+
+template<typename Value, typename Parser>
+std::vector<Value> parseObjectMember(const std::string& json,
+                                     const std::string& memberName,
+                                     Parser parser) {
+    std::vector<Value> result;
+    size_t searchOffset = 0;
+    while (searchOffset < json.size()) {
+        const auto located = locateNestedMemberValue(json, memberName, searchOffset);
+        if (!located) break;
+        const auto& raw = located->value;
+        searchOffset = located->end;
+
+        size_t offset = 0;
+        skipSpace(raw, offset);
+        if (offset < raw.size() && raw[offset] == '{') {
+            result.push_back(parser(raw));
+            continue;
+        }
+        if (offset >= raw.size() || raw[offset++] != '[') continue;
+        while (offset < raw.size()) {
+            skipSpace(raw, offset);
+            if (offset >= raw.size() || raw[offset] == ']') break;
+            const size_t start = offset;
+            if (!skipValue(raw, offset)) break;
+            size_t itemOffset = start;
+            skipSpace(raw, itemOffset);
+            if (itemOffset < raw.size() && raw[itemOffset] == '{') {
+                result.push_back(parser(raw.substr(start, offset - start)));
+            }
+            skipSpace(raw, offset);
+            if (offset < raw.size() && raw[offset] == ',') ++offset;
+        }
+    }
+    return result;
+}
+
 template<typename T, typename Validator>
 std::optional<T> validated(std::optional<T> value, Validator validator) {
     return value && validator(*value) ? value : std::nullopt;
 }
 
 } // namespace
+
+navidrome::ParsedSubsonicResponse navidrome::parseSubsonicResponseJson(
+        const std::string& json) {
+    ParsedSubsonicResponse result;
+    const auto payload = nestedMemberValue(json, "subsonic-response");
+    if (!payload) return result;
+    result.valid = true;
+    result.payloadJson = *payload;
+    result.ok = stringMember(*payload, "status").value_or("") == "ok";
+    result.version = stringMember(*payload, "version").value_or("");
+    result.type = stringMember(*payload, "type").value_or("");
+    result.serverVersion = stringMember(*payload, "serverVersion").value_or("");
+    result.openSubsonic = boolMember(*payload, "openSubsonic").value_or(false);
+    if (const auto errorObject = memberValue(*payload, "error")) {
+        SubsonicError error;
+        error.code = intMember(*errorObject, "code");
+        error.message = stringMember(*errorObject, "message").value_or("");
+        result.error = std::move(error);
+    }
+    return result;
+}
+
+navidrome::Artist navidrome::parseArtistJson(const std::string& json,
+                                              const std::string& fallbackName) {
+    Artist artist;
+    artist.id = stringMember(json, "id").value_or("");
+    artist.name = stringMember(json, "name").value_or(fallbackName);
+    artist.coverArtId = stringMember(json, "coverArt").value_or("");
+    artist.albumCount = validated(intMember(json, "albumCount"),
+                                  [](int value) { return value >= 0; }).value_or(0);
+    artist.starred = stringMember(json, "starred");
+    return artist;
+}
+
+std::vector<navidrome::Artist> navidrome::parseArtistArrayJson(
+        const std::string& json, const std::string& memberName,
+        const std::string& fallbackName) {
+    return parseObjectMember<Artist>(json, memberName, [&](const std::string& item) {
+        return parseArtistJson(item, fallbackName);
+    });
+}
+
+navidrome::Album navidrome::parseAlbumJson(const std::string& json,
+                                            const std::string& fallbackArtistId,
+                                            const std::string& fallbackName) {
+    Album album;
+    album.id = stringMember(json, "id").value_or("");
+    album.name = stringMember(json, "name").value_or(fallbackName);
+    album.artist = stringMember(json, "artist").value_or("");
+    album.artistId = stringMember(json, "artistId").value_or(fallbackArtistId);
+    album.coverArtId = stringMember(json, "coverArt").value_or("");
+    album.year = validated(intMember(json, "year"),
+                           [](int value) { return value > 0; }).value_or(0);
+    album.songCount = validated(intMember(json, "songCount"),
+                                [](int value) { return value >= 0; }).value_or(0);
+    album.starred = stringMember(json, "starred");
+    return album;
+}
+
+std::vector<navidrome::Album> navidrome::parseAlbumArrayJson(
+        const std::string& json, const std::string& memberName,
+        const std::string& fallbackArtistId, const std::string& fallbackName) {
+    return parseObjectMember<Album>(json, memberName, [&](const std::string& item) {
+        return parseAlbumJson(item, fallbackArtistId, fallbackName);
+    });
+}
+
+navidrome::ServerPlaylist navidrome::parsePlaylistJson(const std::string& json) {
+    ServerPlaylist playlist;
+    playlist.id = stringMember(json, "id").value_or("");
+    playlist.name = stringMember(json, "name").value_or("");
+    playlist.owner = stringMember(json, "owner").value_or("");
+    playlist.comment = stringMember(json, "comment").value_or("");
+    playlist.coverArtId = stringMember(json, "coverArt").value_or("");
+    playlist.created = stringMember(json, "created").value_or("");
+    playlist.changed = stringMember(json, "changed").value_or("");
+    playlist.songCount = validated(intMember(json, "songCount"),
+                                   [](int value) { return value >= 0; }).value_or(0);
+    playlist.duration = validated(doubleMember(json, "duration"),
+                                  [](double value) { return value >= 0; }).value_or(0.0);
+    playlist.isPublic = boolMember(json, "public");
+    return playlist;
+}
+
+std::vector<navidrome::ServerPlaylist> navidrome::parsePlaylistArrayJson(
+        const std::string& json, const std::string& memberName) {
+    return parseObjectMember<ServerPlaylist>(json, memberName, parsePlaylistJson);
+}
+
+std::vector<navidrome::MusicFolder> navidrome::parseMusicFolderArrayJson(
+        const std::string& json, const std::string& memberName) {
+    return parseObjectMember<MusicFolder>(json, memberName, [](const std::string& item) {
+        MusicFolder folder;
+        const auto idString = stringMember(item, "id");
+        if (idString) folder.id = *idString;
+        else if (const auto id = intMember(item, "id")) folder.id = std::to_string(*id);
+        folder.name = stringMember(item, "name").value_or("");
+        return folder;
+    });
+}
+
+navidrome::ScanStatus navidrome::parseScanStatusJson(const std::string& json) {
+    ScanStatus status;
+    const auto object = nestedMemberValue(json, "scanStatus");
+    const std::string& source = object ? *object : json;
+    status.scanning = boolMember(source, "scanning").value_or(false);
+    status.lastScan = stringMember(source, "lastScan").value_or("");
+    if (status.lastScan.empty()) {
+        if (const auto scalar = int64Member(source, "lastScan"))
+            status.lastScan = std::to_string(*scalar);
+    }
+    return status;
+}
+
+std::vector<navidrome::OpenSubsonicExtension>
+navidrome::parseOpenSubsonicExtensionsJson(const std::string& json,
+                                            const std::string& memberName) {
+    auto result = parseObjectMember<OpenSubsonicExtension>(
+        json, memberName, [](const std::string& item) {
+            OpenSubsonicExtension extension;
+            extension.name = stringMember(item, "name").value_or("");
+            extension.versions = integerList(item, "versions");
+            return extension;
+        });
+    if (!result.empty()) return result;
+    return parseObjectMember<OpenSubsonicExtension>(
+        json, "openSubsonicExtensions", [](const std::string& item) {
+            OpenSubsonicExtension extension;
+            extension.name = stringMember(item, "name").value_or("");
+            extension.versions = integerList(item, "versions");
+            return extension;
+        });
+}
 
 navidrome::Song navidrome::parseSongJson(const std::string& json,
                                          const std::string& fallbackAlbumId,
@@ -283,6 +500,8 @@ navidrome::Song navidrome::parseSongJson(const std::string& json,
     song.transcodedContentType = stringMember(json, "transcodedContentType");
     song.starred = stringMember(json, "starred");
     song.played = stringMember(json, "played");
+    song.userRating = validated(intMember(json, "userRating"),
+                                [](int value) { return value >= 0 && value <= 5; });
     song.albumArtist = stringMember(json, "albumArtist");
     if (!song.albumArtist) song.albumArtist = stringMember(json, "displayAlbumArtist");
     song.displayArtist = stringMember(json, "displayArtist");
@@ -330,31 +549,7 @@ navidrome::Song navidrome::parseSongJson(const std::string& json,
 std::vector<navidrome::Song> navidrome::parseSongArrayJson(
         const std::string& json, const std::string& memberName,
         const std::string& fallbackAlbumId, const std::string& fallbackTitle) {
-    std::vector<Song> result;
-    const auto raw = nestedMemberValue(json, memberName);
-    if (!raw) return result;
-
-    size_t offset = 0;
-    skipSpace(*raw, offset);
-    if (offset < raw->size() && (*raw)[offset] == '{') {
-        result.push_back(parseSongJson(*raw, fallbackAlbumId, fallbackTitle));
-        return result;
-    }
-    if (offset >= raw->size() || (*raw)[offset++] != '[') return result;
-
-    while (offset < raw->size()) {
-        skipSpace(*raw, offset);
-        if (offset >= raw->size() || (*raw)[offset] == ']') break;
-        const size_t start = offset;
-        if (!skipValue(*raw, offset)) break;
-        size_t itemOffset = start;
-        skipSpace(*raw, itemOffset);
-        if (itemOffset < raw->size() && (*raw)[itemOffset] == '{') {
-            result.push_back(parseSongJson(raw->substr(start, offset - start),
-                                           fallbackAlbumId, fallbackTitle));
-        }
-        skipSpace(*raw, offset);
-        if (offset < raw->size() && (*raw)[offset] == ',') ++offset;
-    }
-    return result;
+    return parseObjectMember<Song>(json, memberName, [&](const std::string& item) {
+        return parseSongJson(item, fallbackAlbumId, fallbackTitle);
+    });
 }

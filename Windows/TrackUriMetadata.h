@@ -61,7 +61,10 @@ inline std::string buildTrackURI(const Song& song) {
     }
     if (song.grouping && !wroteGrouping) text("grouping", *song.grouping);
     for (const auto& value : song.moods) text("mood", value);
-    number("playCount", song.playCount, nonNegative); number("discnumber", song.discNumber, positive);
+    number("playCount", song.playCount, nonNegative);
+    if (song.userRating && *song.userRating >= 0 && *song.userRating <= 5)
+        number("userRating", song.userRating, nonNegative);
+    number("discnumber", song.discNumber, positive);
     number("bpm", song.bpm, positive); number("size", song.size, nonNegative);
     number("bitrate", song.bitRate, positive); number("bitdepth", song.bitDepth, positive);
     number("samplerate", song.samplingRate, positive); number("channels", song.channelCount, positive);
@@ -139,6 +142,11 @@ inline bool parseTrackURI(const std::string& uri, Song& song) {
         else if (key == "date") { std::optional<int> v; parseInt(value, v, true); if (v) song.year = *v; }
         else if (key == "duration") { std::optional<double> v; parseDouble(value, v, true); if (v) song.duration = *v; }
         else if (key == "playCount") parseInt(value, song.playCount, false, true);
+        else if (key == "userRating") {
+            std::optional<int> rating;
+            parseInt(value, rating, false, true);
+            if (rating && *rating <= 5) song.userRating = rating;
+        }
         else if (key == "discnumber") parseInt(value, song.discNumber, true);
         else if (key == "bpm") parseDouble(value, song.bpm, true); else if (key == "size") parseInt64(value, song.size);
         else if (key == "bitrate") parseInt(value, song.bitRate, true);

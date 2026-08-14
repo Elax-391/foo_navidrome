@@ -13,6 +13,7 @@ struct Artist {
     std::string name;
     std::string coverArtId;
     int albumCount = 0;
+    std::optional<std::string> starred;
 };
 
 struct Album {
@@ -23,6 +24,7 @@ struct Album {
     std::string coverArtId;
     int year      = 0;
     int songCount = 0;
+    std::optional<std::string> starred;
 };
 
 struct Song {
@@ -50,6 +52,7 @@ struct Song {
     std::optional<std::string> starred;
     std::optional<std::string> played;
     std::optional<int> playCount;
+    std::optional<int> userRating;
 
     // Extended tags. Lists preserve server ordering and multi-value tags.
     std::optional<std::string> albumArtist;
@@ -113,6 +116,75 @@ struct SearchResults {
     std::vector<Artist> artists;
     std::vector<Album>  albums;
     std::vector<Song>   songs;
+};
+
+enum class FavoriteKind {
+    Song,
+    Album,
+    Artist,
+};
+
+enum class AlbumListKind {
+    Newest,
+    Frequent,
+    Recent,
+    Random,
+    Starred,
+};
+
+struct StarredResults {
+    std::vector<Artist> artists;
+    std::vector<Album> albums;
+    std::vector<Song> songs;
+};
+
+struct ServerPlaylist {
+    std::string id;
+    std::string name;
+    std::string owner;
+    std::string comment;
+    std::string coverArtId;
+    std::string created;
+    std::string changed;
+    int songCount = 0;
+    double duration = 0.0;
+    std::optional<bool> isPublic;
+};
+
+struct ServerPlaylistDetails {
+    ServerPlaylist playlist;
+    std::vector<Song> songs;
+};
+
+struct OpenSubsonicExtension {
+    std::string name;
+    std::vector<int> versions;
+};
+
+struct OpenSubsonicCapabilities {
+    bool formPost = false;
+    std::vector<OpenSubsonicExtension> extensions;
+};
+
+enum class PlaylistWriteState {
+    Accepted,
+    Complete,
+    Unchanged,
+    Partial,
+    Unknown,
+    Failed,
+};
+
+struct PlaylistWriteResult {
+    PlaylistWriteState state = PlaylistWriteState::Failed;
+    ServerPlaylist playlist;
+    std::size_t requestedCount = 0;
+    std::size_t actualCount = 0;
+    std::size_t addedCount = 0;
+    std::size_t removedCount = 0;
+    bool verified = false;
+    bool restored = false;
+    std::string error;
 };
 
 // Parse a multiline custom-headers blob (one "Name: Value" per line) into

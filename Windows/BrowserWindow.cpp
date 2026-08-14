@@ -961,7 +961,8 @@ PlaylistAppendReceipt BrowserWindow::enqueueNodes(
     auto pm = playlist_manager::get();
     t_size pl = pm->get_active_playlist();
     if (pl == pfc_infinite) {
-        pm->create_playlist("Navidrome", ~0, pfc_infinite);
+        pm->create_playlist("Navidrome", static_cast<t_size>(pfc_infinite),
+                            static_cast<t_size>(pfc_infinite));
         pl = pm->get_active_playlist();
     }
     t_size insertPos = pm->playlist_get_item_count(pl);

@@ -168,7 +168,8 @@ jobs:
           $tests = @(
             @{ Project = 'Windows\tests\SongMetadataTests.vcxproj';    Exe = 'SongMetadataTests.exe' },
             @{ Project = 'Windows\tests\MediaEnrichmentTests.vcxproj'; Exe = 'MediaEnrichmentTests.exe' },
-            @{ Project = 'Windows\tests\LibraryImportTests.vcxproj';   Exe = 'LibraryImportTests.exe' }
+            @{ Project = 'Windows\tests\LibraryImportTests.vcxproj';   Exe = 'LibraryImportTests.exe' },
+            @{ Project = 'Windows\tests\SubsonicExtrasTests.vcxproj';  Exe = 'SubsonicExtrasTests.exe' }
           )
           foreach ($test in $tests) {
             $name = [IO.Path]::GetFileNameWithoutExtension($test.Project)

@@ -86,8 +86,8 @@ struct LibraryCompletePayload {
 };
 
 struct PlaylistAppendReceipt {
-    t_size playlist = pfc_infinite;
-    t_size insertPos = pfc_infinite;
+    t_size playlist = static_cast<t_size>(pfc_infinite);
+    t_size insertPos = static_cast<t_size>(pfc_infinite);
     t_size count = 0;
     metadb_handle_list tracks;
     bool success = false;

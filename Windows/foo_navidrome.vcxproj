@@ -144,6 +144,14 @@
     </Link>
   </ItemDefinitionGroup>
 
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <DisableSpecificWarnings>4100;4702;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
@@ -157,6 +165,12 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="SongJsonParser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ServerIdentity.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="SubsonicRequestLogic.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="EsLyricBridge.cpp">
@@ -178,6 +192,8 @@
     <ClInclude Include="SongMetadataProjection.h" />
     <ClInclude Include="SongMetadata.h" />
     <ClInclude Include="SongJsonParser.h" />
+    <ClInclude Include="ServerIdentity.h" />
+    <ClInclude Include="SubsonicRequestLogic.h" />
     <ClInclude Include="TrackUriMetadata.h" />
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />

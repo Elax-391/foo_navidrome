@@ -1,6 +1,8 @@
 #pragma once
 #include "../SubsonicTypes.h"
 #include "MediaEnrichmentLogic.h"
+#include "SubsonicRequestLogic.h"
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -47,6 +49,39 @@ public:
                                           const std::string& albumId,
                                           std::string& outError);
     SearchResults        search(const std::string& query, std::string& outError);
+    SearchResults        search(const SubsonicRequestContext& context,
+                                const std::string& query, std::string& outError);
+
+    std::vector<Album> getAlbumList(const SubsonicRequestContext& context,
+                                    AlbumListKind kind, std::size_t count,
+                                    std::string& outError);
+    StarredResults getStarred(const SubsonicRequestContext& context,
+                              std::string& outError);
+    bool setFavorite(const SubsonicRequestContext& context, FavoriteKind kind,
+                     const std::string& id, bool favorite,
+                     std::string& outError);
+    bool setRating(const SubsonicRequestContext& context, const std::string& songId,
+                   int rating, std::string& outError);
+    std::vector<ServerPlaylist> getPlaylists(
+        const SubsonicRequestContext& context, std::string& outError);
+    ServerPlaylistDetails getPlaylist(const SubsonicRequestContext& context,
+                                      const std::string& playlistId,
+                                      std::string& outError);
+    OpenSubsonicCapabilities getOpenSubsonicCapabilities(
+        const SubsonicRequestContext& context, std::string& outError);
+    PlaylistWriteResult createOrReplacePlaylist(
+        const SubsonicRequestContext& context,
+        const std::optional<std::string>& playlistId, const std::string& name,
+        const std::vector<std::string>& orderedSongIds, bool formPostAdvertised,
+        std::string& outError);
+    PlaylistWriteResult updatePlaylist(
+        const SubsonicRequestContext& context, const std::string& playlistId,
+        const std::vector<std::string>& songIdsToAdd,
+        const std::vector<std::size_t>& songIndicesToRemove,
+        bool formPostAdvertised,
+        std::string& outError);
+    bool scrobble(const SubsonicRequestContext& context, const std::string& songId,
+                  bool submission, std::string& outError);
 
     std::string streamURL(const std::string& songId);
     std::string coverArtURL(const std::string& id, int size = 0);
@@ -79,13 +114,19 @@ public:
 private:
     SubsonicClientWin() = default;
 
-    std::string authParams(const SubsonicRequestContext& context) const;
+    OrderedParameters authParameters(const SubsonicRequestContext& context) const;
     std::string buildURL(const SubsonicRequestContext& context,
                          const std::string& endpoint,
-                         const std::string& extra = "") const;
+                         const OrderedParameters& parameters = {}) const;
+    std::string request(const SubsonicRequestContext& context,
+                        const std::string& endpoint,
+                        const OrderedParameters& parameters,
+                        RequestMethod method, std::string& outError) const;
     // Synchronous HTTP GET; returns body or "" on error (sets outError).
-    std::string httpGet(const SubsonicRequestContext& context,
-                        const std::string& url, std::string& outError) const;
+    std::string httpRequest(const SubsonicRequestContext& context,
+                            const std::string& url, RequestMethod method,
+                            const std::string& body,
+                            std::string& outError) const;
 };
 
 } // namespace navidrome
