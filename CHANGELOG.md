@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/santiagorod92/foo_navidrome/compare/v1.6.0...v1.6.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* enter action to clear current playlist ([22e91f1](https://github.com/santiagorod92/foo_navidrome/commit/22e91f1152fdd7f9dd38db172253674260ef405c))
+
 ## [1.6.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.5.0...v1.6.0) (2026-08-14)
 
 
