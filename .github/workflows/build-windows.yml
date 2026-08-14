@@ -170,7 +170,8 @@ jobs:
             @{ Project = 'Windows\tests\MediaEnrichmentTests.vcxproj'; Exe = 'MediaEnrichmentTests.exe' },
             @{ Project = 'Windows\tests\LibraryImportTests.vcxproj';   Exe = 'LibraryImportTests.exe' },
             @{ Project = 'Windows\tests\SubsonicExtrasTests.vcxproj';  Exe = 'SubsonicExtrasTests.exe' },
-            @{ Project = 'Windows\tests\BrowserExtrasTests.vcxproj';   Exe = 'BrowserExtrasTests.exe' }
+            @{ Project = 'Windows\tests\BrowserExtrasTests.vcxproj';   Exe = 'BrowserExtrasTests.exe' },
+            @{ Project = 'Windows\tests\ScrobbleTests.vcxproj';        Exe = 'ScrobbleTests.exe' }
           )
           foreach ($test in $tests) {
             $name = [IO.Path]::GetFileNameWithoutExtension($test.Project)

@@ -114,6 +114,16 @@ public:
 private:
     SubsonicClientWin() = default;
 
+    struct HttpRequestProfile {
+        int resolveTimeoutMs = 15000;
+        int connectTimeoutMs = 15000;
+        int sendTimeoutMs = 15000;
+        int receiveTimeoutMs = 30000;
+        int overallTimeoutMs = 0;
+        std::size_t maxResponseBytes = 4 * 1024 * 1024;
+        bool disableRedirects = false;
+    };
+
     OrderedParameters authParameters(const SubsonicRequestContext& context) const;
     std::string buildURL(const SubsonicRequestContext& context,
                          const std::string& endpoint,
@@ -122,11 +132,17 @@ private:
                         const std::string& endpoint,
                         const OrderedParameters& parameters,
                         RequestMethod method, std::string& outError) const;
+    std::string request(const SubsonicRequestContext& context,
+                        const std::string& endpoint,
+                        const OrderedParameters& parameters,
+                        RequestMethod method, std::string& outError,
+                        const HttpRequestProfile& profile) const;
     // Synchronous HTTP GET; returns body or "" on error (sets outError).
     std::string httpRequest(const SubsonicRequestContext& context,
                             const std::string& url, RequestMethod method,
                             const std::string& body,
-                            std::string& outError) const;
+                            std::string& outError,
+                            const HttpRequestProfile& profile) const;
 };
 
 } // namespace navidrome

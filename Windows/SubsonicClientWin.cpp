@@ -4,6 +4,7 @@
 #include "SongJsonParser.h"
 #include "SubsonicRequestLogic.h"
 #include <algorithm>
+#include <chrono>
 #include <SDK/cfg_var.h>
 
 #pragma comment(lib, "winhttp.lib")
@@ -156,9 +157,17 @@ std::string navidrome::SubsonicClientWin::request(
         const SubsonicRequestContext& context, const std::string& endpoint,
         const OrderedParameters& parameters, RequestMethod method,
         std::string& outError) const {
+    return request(context, endpoint, parameters, method, outError,
+                   HttpRequestProfile{});
+}
+
+std::string navidrome::SubsonicClientWin::request(
+        const SubsonicRequestContext& context, const std::string& endpoint,
+        const OrderedParameters& parameters, RequestMethod method,
+        std::string& outError, const HttpRequestProfile& profile) const {
     if (method == RequestMethod::Get) {
         return httpRequest(context, buildURL(context, endpoint, parameters), method,
-                           {}, outError);
+                           {}, outError, profile);
     }
 
     std::string base = context.serverUrl;
@@ -166,7 +175,7 @@ std::string navidrome::SubsonicClientWin::request(
     auto allParameters = authParameters(context);
     allParameters.insert(allParameters.end(), parameters.begin(), parameters.end());
     return httpRequest(context, base + "/rest/" + endpoint, method,
-                       encodeFormParameters(allParameters), outError);
+                        encodeFormParameters(allParameters), outError, profile);
 }
 
 std::vector<std::string> navidrome::SubsonicClientWin::customHeaderLines() {
@@ -190,7 +199,14 @@ std::string navidrome::SubsonicClientWin::generateToken(const std::string& passw
 std::string navidrome::SubsonicClientWin::httpRequest(
         const SubsonicRequestContext& context, const std::string& urlStr,
         RequestMethod method, const std::string& body,
-        std::string& outError) const {
+        std::string& outError, const HttpRequestProfile& profile) const {
+    const auto requestStarted = std::chrono::steady_clock::now();
+    const auto overallTimedOut = [&]() {
+        if (profile.overallTimeoutMs <= 0) return false;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - requestStarted);
+        return elapsed.count() >= profile.overallTimeoutMs;
+    };
     std::wstring wurl = toWide(urlStr);
 
     URL_COMPONENTS uc = {};
@@ -208,7 +224,13 @@ std::string navidrome::SubsonicClientWin::httpRequest(
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSess) { outError = navidrome::l10n::winHttpOpenFailed; return ""; }
-    WinHttpSetTimeouts(hSess, 15000, 15000, 15000, 30000);
+    if (!WinHttpSetTimeouts(hSess, profile.resolveTimeoutMs,
+            profile.connectTimeoutMs, profile.sendTimeoutMs,
+            profile.receiveTimeoutMs)) {
+        outError = navidrome::l10n::requestError(GetLastError());
+        WinHttpCloseHandle(hSess);
+        return "";
+    }
     applySecureProtocols(hSess);
 
     HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
@@ -225,6 +247,15 @@ std::string navidrome::SubsonicClientWin::httpRequest(
     if (!hReq) {
         outError = navidrome::l10n::requestError(GetLastError());
     } else {
+        bool requestReady = true;
+        if (profile.disableRedirects) {
+            DWORD disabledFeatures = WINHTTP_DISABLE_REDIRECTS;
+            if (!WinHttpSetOption(hReq, WINHTTP_OPTION_DISABLE_FEATURE,
+                    &disabledFeatures, sizeof(disabledFeatures))) {
+                outError = navidrome::l10n::requestError(GetLastError());
+                requestReady = false;
+            }
+        }
         std::string joined;
         for (const auto& line : navidrome::parseHeaderLines(context.customHeaders)) {
             if (!joined.empty()) joined += "\r\n";
@@ -243,17 +274,19 @@ std::string navidrome::SubsonicClientWin::httpRequest(
             ? WINHTTP_NO_REQUEST_DATA
             : const_cast<char*>(body.data());
         const DWORD bodyBytes = static_cast<DWORD>(body.size());
-        if (WinHttpSendRequest(hReq, nullptr, 0, requestBody, bodyBytes, bodyBytes, 0) &&
+        if (requestReady &&
+            WinHttpSendRequest(hReq, nullptr, 0, requestBody, bodyBytes, bodyBytes, 0) &&
             WinHttpReceiveResponse(hReq, nullptr)) {
             DWORD status = 0, sz = sizeof(status);
             WinHttpQueryHeaders(hReq,
                 WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                 nullptr, &status, &sz, nullptr);
-            constexpr std::size_t kMaxTextResponseBytes = 4 * 1024 * 1024;
+            bool responseTimedOut = overallTimedOut();
             DWORD avail = 0;
-            while (WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
-                if (result.size() > kMaxTextResponseBytes ||
-                    avail > kMaxTextResponseBytes - result.size()) {
+            while (!responseTimedOut &&
+                   WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
+                if (result.size() > profile.maxResponseBytes ||
+                    avail > profile.maxResponseBytes - result.size()) {
                     result.clear();
                     outError = navidrome::l10n::invalidResponse;
                     break;
@@ -266,8 +299,12 @@ std::string navidrome::SubsonicClientWin::httpRequest(
                     break;
                 }
                 result.append(chunk, 0, read);
+                responseTimedOut = overallTimedOut();
             }
-            if (status != 200) {
+            if (responseTimedOut) {
+                result.clear();
+                outError = navidrome::l10n::requestError(ERROR_WINHTTP_TIMEOUT);
+            } else if (status != 200) {
                 const auto response = parseSubsonicResponseJson(result);
                 if (response.valid && response.error && !response.error->message.empty())
                     outError = response.error->message;
@@ -275,7 +312,7 @@ std::string navidrome::SubsonicClientWin::httpRequest(
                     outError = navidrome::l10n::httpError(status);
                 result.clear();
             }
-        } else {
+        } else if (requestReady) {
             outError = navidrome::l10n::requestError(GetLastError());
         }
         WinHttpCloseHandle(hReq);
@@ -677,10 +714,18 @@ navidrome::PlaylistWriteResult navidrome::SubsonicClientWin::updatePlaylist(
 bool navidrome::SubsonicClientWin::scrobble(
         const SubsonicRequestContext& context, const std::string& songId,
         bool submission, std::string& outError) {
+    HttpRequestProfile profile;
+    profile.resolveTimeoutMs = 2000;
+    profile.connectTimeoutMs = 3000;
+    profile.sendTimeoutMs = 3000;
+    profile.receiveTimeoutMs = 4000;
+    profile.overallTimeoutMs = 12000;
+    profile.maxResponseBytes = 64 * 1024;
+    profile.disableRedirects = true;
     const auto body = request(context, "scrobble.view",
                               {{"id", songId},
                                {"submission", submission ? "true" : "false"}},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError, profile);
     return !body.empty() && !checkedResponse(body, outError).empty();
 }
 

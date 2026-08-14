@@ -179,6 +179,15 @@
     <ClCompile Include="SubsonicRequestLogic.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="ScrobbleLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ScrobbleWorker.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ScrobbleService.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="EsLyricBridge.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -200,6 +209,9 @@
     <ClInclude Include="SongJsonParser.h" />
     <ClInclude Include="ServerIdentity.h" />
     <ClInclude Include="SubsonicRequestLogic.h" />
+    <ClInclude Include="ScrobbleLogic.h" />
+    <ClInclude Include="ScrobbleWorker.h" />
+    <ClInclude Include="ScrobbleService.h" />
     <ClInclude Include="TrackUriMetadata.h" />
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />

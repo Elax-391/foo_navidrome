@@ -4,10 +4,16 @@
 #include "SubsonicClientWin.h"
 #include "MediaEnrichmentLogic.h"
 #include "EsLyricBridge.h"
+#include "ScrobbleService.h"
+#include "ServerIdentity.h"
+#include "TrackUriMetadata.h"
 #include <SDK/cfg_var.h>
 #include <SDK/album_art.h>
 #include <SDK/album_art_helpers.h>
 #include <SDK/initquit.h>
+#include <SDK/play_callback.h>
+#include <chrono>
+#include <cmath>
 #include <string>
 #include <cctype>
 #include <set>
@@ -43,6 +49,7 @@ static constexpr GUID guid_prefs_page     = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xb
 static constexpr GUID guid_mainmenu_group = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x06} };
 static constexpr GUID guid_mainmenu_cmd   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x07} };
 static constexpr GUID guid_cfg_custom_headers = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0a} };
+static constexpr GUID guid_cfg_scrobble   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0b} };
 
 // ---------------------------------------------------------------------------
 // Config vars
@@ -56,6 +63,9 @@ namespace navidrome {
     // API, cover art and audio stream. Used e.g. for Cloudflare Access
     // service-token headers when Navidrome sits behind a Zero Trust tunnel.
     cfg_string cfg_custom_headers(guid_cfg_custom_headers, "");
+    // Keep the modern bool type and GUID aligned with the upstream/macOS
+    // setting so its serialization remains stable across platforms.
+    cfg_var_modern::cfg_bool cfg_scrobble(guid_cfg_scrobble, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +238,8 @@ public:
     }
     void apply()  override {
         saveSettings();
+        navidrome::ScrobbleCoordinator::get().setEnabled(
+            navidrome::cfg_scrobble.get());
         navidrome::CoverCache::instance().clear();
 
         // Trigger ESLyric bridge update (design §3.5)
@@ -243,9 +255,12 @@ public:
         notifyCb();
     }
     void reset()  override {
+        m_loading = true;
         SetDlgItemText(IDC_URL,  L"http://localhost:4533/");
         SetDlgItemText(IDC_USER, L"");
         SetDlgItemText(IDC_PASS, L"");
+        CheckDlgButton(IDC_SCROBBLE, BST_CHECKED);
+        m_loading = false;
         m_changed = true; notifyCb();
     }
 
@@ -257,10 +272,12 @@ public:
         COMMAND_HANDLER_EX(IDC_PASS, EN_CHANGE, OnChanged)
         COMMAND_HANDLER_EX(IDC_TEST, BN_CLICKED, OnTest)
         COMMAND_HANDLER_EX(IDC_HEADERS, BN_CLICKED, OnHeaders)
+        COMMAND_HANDLER_EX(IDC_SCROBBLE, BN_CLICKED, OnChanged)
     END_MSG_MAP()
 
 private:
-    enum { IDC_URL=1001, IDC_USER=1002, IDC_PASS=1003, IDC_TEST=1004, IDC_STATUS=1005, IDC_HEADERS=1006 };
+    enum { IDC_URL=1001, IDC_USER=1002, IDC_PASS=1003, IDC_TEST=1004,
+           IDC_STATUS=1005, IDC_HEADERS=1006, IDC_SCROBBLE=1007 };
     // Posted from the background ping thread back to the UI thread (see OnTest).
     static constexpr UINT WM_TEST_RESULT = WM_USER + 200;
 
@@ -294,6 +311,11 @@ private:
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HEADERS)), nullptr, nullptr);
         SendMessageW(hdr, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
 
+        HWND scr = CreateWindowW(L"BUTTON", navidrome::l10n::reportPlays,
+            WS_CHILD|WS_VISIBLE|BS_AUTOCHECKBOX, 8,190, 374,20, *this,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SCROBBLE)), nullptr, nullptr);
+        SendMessageW(scr, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
+
         loadSettings();
         return 0;
     }
@@ -301,12 +323,17 @@ private:
     void OnHeaders(UINT, int, HWND) { NavidromeHeadersWindow::get().show(); }
 
     void loadSettings() {
+        m_loading = true;
         SetDlgItemText(IDC_URL,  pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_server_url.get().c_str()));
         SetDlgItemText(IDC_USER, pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_username.get().c_str()));
         SetDlgItemText(IDC_PASS, pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_password.get().c_str()));
+        CheckDlgButton(IDC_SCROBBLE,
+            navidrome::cfg_scrobble.get() ? BST_CHECKED : BST_UNCHECKED);
+        m_loading = false;
+        m_changed = false;
     }
 
-    void saveSettings() {
+    void saveCredentials() {
         auto getText = [&](int id) -> std::string {
             wchar_t buf[1024] = {};
             GetDlgItemText(id, buf, 1024);
@@ -317,11 +344,23 @@ private:
         navidrome::cfg_password.set(getText(IDC_PASS).c_str());
     }
 
-    void OnChanged(UINT, int, HWND) { m_changed = true; notifyCb(); }
+    void saveSettings() {
+        saveCredentials();
+        navidrome::cfg_scrobble.set(
+            IsDlgButtonChecked(IDC_SCROBBLE) == BST_CHECKED);
+    }
+
+    void OnChanged(UINT, int, HWND) {
+        if (m_loading) return;
+        m_changed = true;
+        notifyCb();
+    }
     void notifyCb() { if (m_cb.is_valid()) m_cb->on_state_changed(); }
 
     void OnTest(UINT, int, HWND) {
-        saveSettings();
+        // Preserve existing test behavior for credentials without applying the
+        // staged scrobble checkbox before the user presses Apply.
+        saveCredentials();
         SetDlgItemText(IDC_STATUS, navidrome::l10n::testing);
         std::thread([this]() {
             std::string err;
@@ -347,6 +386,7 @@ private:
 
     preferences_page_callback::ptr m_cb;
     bool m_changed = false;
+    bool m_loading = false;
 };
 
 class NavidromePrefsPageFactory : public preferences_page_v3 {
@@ -554,11 +594,114 @@ public:
 FB2K_SERVICE_FACTORY(NavidromeArtExtractor);
 
 // ---------------------------------------------------------------------------
-// Init/quit — ESLyric bridge lifecycle
+// Playback reporting — callbacks stay on foobar's main thread and only update
+// the pure session reducer / enqueue immutable work. Network I/O is owned by a
+// single joined worker in ScrobbleCoordinator.
+// ---------------------------------------------------------------------------
+namespace {
+
+double scrobbleMonotonicSeconds() noexcept {
+    using Clock = std::chrono::steady_clock;
+    return std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
+}
+
+navidrome::ScrobbleStopReason mapStopReason(
+        play_control::t_stop_reason reason) noexcept {
+    switch (reason) {
+    case play_control::stop_reason_eof:
+        return navidrome::ScrobbleStopReason::EndOfFile;
+    case play_control::stop_reason_starting_another:
+        return navidrome::ScrobbleStopReason::StartingAnother;
+    case play_control::stop_reason_shutting_down:
+        return navidrome::ScrobbleStopReason::ShuttingDown;
+    default:
+        return navidrome::ScrobbleStopReason::User;
+    }
+}
+
+class NavidromeScrobbleCallback : public play_callback_static {
+public:
+    unsigned get_flags() override {
+        return flag_on_playback_new_track | flag_on_playback_stop |
+               flag_on_playback_seek | flag_on_playback_pause |
+               flag_on_playback_time;
+    }
+
+    void on_playback_new_track(metadb_handle_ptr track) noexcept override {
+        try {
+            auto& coordinator = navidrome::ScrobbleCoordinator::get();
+            coordinator.setEnabled(navidrome::cfg_scrobble.get());
+
+            navidrome::Song song;
+            if (track.is_empty() || !navidrome::parseTrackURI(track->get_path(), song)) {
+                coordinator.onNewTrack({}, 0.0, {}, {}, scrobbleMonotonicSeconds());
+                return;
+            }
+
+            auto context = navidrome::SubsonicClientWin::get().snapshot();
+            if (context.serverUrl.empty() || context.username.empty() ||
+                context.password.empty()) {
+                coordinator.onNewTrack({}, 0.0, {}, {}, scrobbleMonotonicSeconds());
+                return;
+            }
+            const double duration = std::isfinite(track->get_length()) &&
+                                    track->get_length() > 0.0
+                ? track->get_length() : song.duration;
+            auto identity = navidrome::serverAccountIdentity(
+                context.serverUrl, context.username);
+            coordinator.onNewTrack(std::move(song.id), duration,
+                std::move(context), std::move(identity), scrobbleMonotonicSeconds());
+        } catch (...) {}
+    }
+
+    void on_playback_time(double time) noexcept override {
+        try {
+            navidrome::ScrobbleCoordinator::get().onTime(
+                time, scrobbleMonotonicSeconds());
+        } catch (...) {}
+    }
+
+    void on_playback_seek(double time) noexcept override {
+        try {
+            navidrome::ScrobbleCoordinator::get().onSeek(
+                time, scrobbleMonotonicSeconds());
+        } catch (...) {}
+    }
+
+    void on_playback_pause(bool state) noexcept override {
+        try {
+            navidrome::ScrobbleCoordinator::get().onPause(
+                state, scrobbleMonotonicSeconds());
+        } catch (...) {}
+    }
+
+    void on_playback_stop(play_control::t_stop_reason reason) noexcept override {
+        try {
+            navidrome::ScrobbleCoordinator::get().onStop(
+                mapStopReason(reason), scrobbleMonotonicSeconds());
+        } catch (...) {}
+    }
+
+    void on_playback_starting(play_control::t_track_command, bool) noexcept override {}
+    void on_playback_edited(metadb_handle_ptr) noexcept override {}
+    void on_playback_dynamic_info(const file_info&) noexcept override {}
+    void on_playback_dynamic_info_track(const file_info&) noexcept override {}
+    void on_volume_change(float) noexcept override {}
+};
+
+play_callback_static_factory_t<NavidromeScrobbleCallback>
+    g_navidromeScrobbleCallbackFactory;
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Init/quit — ESLyric bridge and joined scrobble-worker lifecycle
 // ---------------------------------------------------------------------------
 class NavidromeInitQuit : public initquit {
 public:
     void on_init() override {
+        navidrome::ScrobbleCoordinator::get().setEnabled(
+            navidrome::cfg_scrobble.get());
         // Install/update ESLyric bridge on startup
         if (!navidrome::EsLyricBridge::isEsLyricInstalled()) {
             console::print(navidrome::l10n::eslyricBridgeNotInstalled);
@@ -573,6 +716,8 @@ public:
         }
     }
 
-    void on_quit() override {}
+    void on_quit() override {
+        navidrome::ScrobbleCoordinator::get().shutdown();
+    }
 };
 FB2K_SERVICE_FACTORY(NavidromeInitQuit);

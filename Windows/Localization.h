@@ -22,6 +22,7 @@ inline constexpr wchar_t testing[] = L"测试中…";
 inline constexpr wchar_t connected[] = L"已连接！";
 inline constexpr char failedUtf8[] = u8"失败";
 inline constexpr wchar_t customHeaders[] = L"自定义请求头…";
+inline constexpr wchar_t reportPlays[] = L"向 Navidrome 汇报播放记录（Scrobble）";
 
 inline constexpr wchar_t browserTitle[] = L"Navidrome 浏览器";
 inline constexpr wchar_t searchCue[] = L"搜索艺术家、专辑、歌曲…";
