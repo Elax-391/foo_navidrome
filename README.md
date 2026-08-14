@@ -17,6 +17,8 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 - **Favorites and ratings** from the right-click menu — Star / Unstar and a 0-5 star rating, stored per-user on the server so they show up in the web UI and on your phone
 - **Manage server playlists** from the right-click menu — add the selection to any existing playlist or a **New Playlist…**, remove tracks, rename, delete. Changes land on the server, so they show up everywhere
 - **Send Active Playlist to Navidrome** from the right-click menu — uploads the active foobar2000 playlist under the same name
+- **Streaming quality**: ask the server to transcode on the fly (MP3 / Opus / AAC) and cap the bitrate — useful on slow links. Set in Preferences; "Original" always sends the stored file
+- **Download Original Files…** from the right-click menu — saves the selected tracks to a folder, always in their stored format regardless of the streaming setting
 - Add albums or artists to playlist in one click (loads all songs automatically)
 - Right-click any row for a **Play Now / Add to Playlist** context menu
 - Double-click a song to play immediately
@@ -156,6 +158,30 @@ local ones:
   <name>** node — that's where a track has a position on the server to remove.
 - **Rename Playlist…** / **Delete Playlist…** act on a selected playlist row.
   Deleting removes it for every client; the tracks themselves are untouched.
+
+#### Streaming quality
+
+*Preferences › Tools › Navidrome* has two settings that apply to every track:
+
+- **Stream as** — `Server default` leaves it to Navidrome's own transcoding
+  rules, `Original (no transcoding)` always sends the stored file, or pick a
+  target format to have the server transcode on the fly: MP3, Opus, AAC,
+  FLAC or WAV.
+- **Max bitrate** — a kbps ceiling the server may not exceed. Ignored when the
+  stream isn't being transcoded, and when the target is lossless.
+
+> **The server has to be able to produce the format you pick.** Navidrome ships
+> transcodings for MP3, Opus and AAC only. To use **FLAC** or **WAV**, add a
+> matching transcoding under *Navidrome › Settings › Transcoding* first —
+> otherwise the server ignores the request and sends the original file.
+>
+> Lossless targets aren't about saving bandwidth (WAV is bigger than almost any
+> source): they're for playing formats foobar2000 can't decode itself, by having
+> the server convert them without quality loss.
+
+Both take effect on the next track; nothing needs restarting. **Download
+Original Files…** ignores them by design — downloads are always the file as
+stored on the server.
 
 Plays are reported to the server as you listen (`scrobble.view`): "now playing"
 when a track starts, then a play once half of it — or four minutes, whichever

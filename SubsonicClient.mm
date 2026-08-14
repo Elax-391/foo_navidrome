@@ -12,6 +12,8 @@ namespace navidrome {
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;  // Fixed salt generated once at component load
     extern cfg_string cfg_custom_headers;
+    extern cfg_string cfg_stream_format;
+    extern cfg_var_modern::cfg_int cfg_max_bitrate;
 }
 
 // Apply the user-configured custom headers (one "Name: Value" per line) to a
@@ -622,8 +624,13 @@ static SubsonicAlbum *parseAlbum(NSDictionary *a) {
     NSString *artParam = (coverArtId.length > 0)
         ? [NSString stringWithFormat:@"&coverArt=%@", urlEncode(coverArtId)]
         : @"";
-    return [NSString stringWithFormat:@"%@/rest/stream.view?id=%@%@&%@",
-            base, urlEncode(songId), artParam, auth];
+    // Transcoding preferences — the server falls back to its own defaults when
+    // neither is set.
+    std::string transcode = navidrome::streamTranscodeParams(
+        navidrome::cfg_stream_format.get().c_str(),
+        static_cast<int>(navidrome::cfg_max_bitrate.get()));
+    return [NSString stringWithFormat:@"%@/rest/stream.view?id=%@%@&%@%s",
+            base, urlEncode(songId), artParam, auth, transcode.c_str()];
 }
 
 - (NSURL *)coverArtURLForId:(NSString *)coverArtId size:(NSInteger)size {

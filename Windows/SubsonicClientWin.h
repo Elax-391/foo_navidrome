@@ -79,6 +79,7 @@ public:
     // registers the play (play count, Last.fm / ListenBrainz relay).
     bool scrobble(const std::string& songId, bool submission, std::string& outError);
 
+    // Carries the configured transcoding preferences (format / maxBitRate).
     std::string streamURL(const std::string& songId);
     std::string coverArtURL(const std::string& id, int size = 0);
     std::string coverArtURL(const SubsonicRequestContext& context,

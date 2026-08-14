@@ -55,6 +55,8 @@ static constexpr GUID guid_mainmenu_group = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xb
 static constexpr GUID guid_mainmenu_cmd   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x07} };
 static constexpr GUID guid_cfg_custom_headers = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0a} };
 static constexpr GUID guid_cfg_scrobble   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0b} };
+static constexpr GUID guid_cfg_stream_format = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0c} };
+static constexpr GUID guid_cfg_max_bitrate   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0d} };
 
 // ---------------------------------------------------------------------------
 // Config vars
@@ -74,6 +76,16 @@ namespace navidrome {
     // cfg_int_t<bool> (no set()) here, and the two flavours serialize
     // differently — both platforms must use the same one.
     cfg_var_modern::cfg_bool cfg_scrobble(guid_cfg_scrobble, true);
+
+    // Transcoding preferences, applied to every stream.view request.
+    // cfg_stream_format: "" = let the server decide, "raw" = never transcode,
+    // otherwise a Subsonic format name ("mp3", "opus", "aac", …).
+    // cfg_max_bitrate: kbps ceiling; 0 = unlimited.
+    // Qualified for the same reason as cfg_scrobble — an unqualified cfg_int
+    // resolves to the legacy cfg_int_t<t_int32>, which has no set() and
+    // serializes differently.
+    cfg_string cfg_stream_format(guid_cfg_stream_format, "");
+    cfg_var_modern::cfg_int cfg_max_bitrate(guid_cfg_max_bitrate, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +240,8 @@ public:
         SetDlgItemText(IDC_USER, L"");
         SetDlgItemText(IDC_PASS, L"");
         CheckDlgButton(IDC_SCROBBLE, BST_CHECKED);
+        m_format.SetCurSel(0);
+        m_bitrate.SetCurSel(0);
         m_changed = true; notifyCb();
     }
 
@@ -240,11 +254,43 @@ public:
         COMMAND_HANDLER_EX(IDC_TEST, BN_CLICKED, OnTest)
         COMMAND_HANDLER_EX(IDC_HEADERS, BN_CLICKED, OnHeaders)
         COMMAND_HANDLER_EX(IDC_SCROBBLE, BN_CLICKED, OnChanged)
+        COMMAND_HANDLER_EX(IDC_FORMAT,  CBN_SELCHANGE, OnChanged)
+        COMMAND_HANDLER_EX(IDC_BITRATE, CBN_SELCHANGE, OnChanged)
     END_MSG_MAP()
 
 private:
     enum { IDC_URL=1001, IDC_USER=1002, IDC_PASS=1003, IDC_TEST=1004, IDC_STATUS=1005,
-           IDC_HEADERS=1006, IDC_SCROBBLE=1007 };
+           IDC_HEADERS=1006, IDC_SCROBBLE=1007, IDC_FORMAT=1008, IDC_BITRATE=1009 };
+
+    // Streaming transcode options. The stored value is what goes on the wire as
+    // stream.view's `format` — "" leaves the decision to the server's own
+    // transcoding rules, "raw" forces the original file.
+    //
+    // The server can only honour a format it has a transcoding configured for.
+    // Navidrome ships mp3 / opus / aac; FLAC and WAV need a transcoding row
+    // added in its admin UI first, and are mainly useful as lossless
+    // normalisation targets for source codecs foobar2000 can't decode itself.
+    struct FormatOption { const wchar_t* label; const char* value; };
+    static const FormatOption* formatOptions(std::size_t& count) {
+        static const FormatOption kFormats[] = {
+            { L"Server default",            ""     },
+            { L"Original (no transcoding)", "raw"  },
+            { L"MP3",                       "mp3"  },
+            { L"Opus",                      "opus" },
+            { L"AAC",                       "aac"  },
+            { L"FLAC (lossless)",           "flac" },
+            { L"WAV (uncompressed)",        "wav"  },
+        };
+        count = sizeof(kFormats) / sizeof(kFormats[0]);
+        return kFormats;
+    }
+    // kbps ceiling; 0 means "no limit", which is also what Subsonic reads when
+    // the parameter is absent.
+    static const int* bitrateOptions(std::size_t& count) {
+        static const int kBitrates[] = { 0, 64, 96, 128, 192, 256, 320 };
+        count = sizeof(kBitrates) / sizeof(kBitrates[0]);
+        return kBitrates;
+    }
     // Posted from the background ping thread back to the UI thread (see OnTest).
     static constexpr UINT WM_TEST_RESULT = WM_USER + 200;
 
@@ -282,6 +328,32 @@ private:
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SCROBBLE)), nullptr, nullptr);
         SendMessageW(scr, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
 
+        // Streaming transcode controls. Both are per-request stream.view params,
+        // so a change takes effect on the next track without reconnecting.
+        lbl(L"Stream as:",   8, 198, 80, 18);
+        lbl(L"Max bitrate:", 8, 228, 80, 18);
+
+        // CBS_DROPDOWNLIST height is the *dropped* height, not the closed one.
+        m_format.Create(*this, CWindow::rcDefault, nullptr,
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWNLIST, 0, IDC_FORMAT);
+        m_format.SetWindowPos(nullptr, 92, 194, 180, 200, SWP_NOZORDER);
+        m_format.SetFont(f);
+        std::size_t formatCount = 0;
+        const FormatOption* formats = formatOptions(formatCount);
+        for (std::size_t i = 0; i < formatCount; ++i) m_format.AddString(formats[i].label);
+
+        m_bitrate.Create(*this, CWindow::rcDefault, nullptr,
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWNLIST, 0, IDC_BITRATE);
+        m_bitrate.SetWindowPos(nullptr, 92, 224, 180, 200, SWP_NOZORDER);
+        m_bitrate.SetFont(f);
+        std::size_t bitrateCount = 0;
+        const int* bitrates = bitrateOptions(bitrateCount);
+        for (std::size_t i = 0; i < bitrateCount; ++i) {
+            m_bitrate.AddString(bitrates[i] == 0
+                ? L"Unlimited"
+                : (std::to_wstring(bitrates[i]) + L" kbps").c_str());
+        }
+
         loadSettings();
         return 0;
     }
@@ -293,6 +365,22 @@ private:
         SetDlgItemText(IDC_USER, pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_username.get().c_str()));
         SetDlgItemText(IDC_PASS, pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_password.get().c_str()));
         CheckDlgButton(IDC_SCROBBLE, navidrome::cfg_scrobble.get() ? BST_CHECKED : BST_UNCHECKED);
+
+        std::string format = navidrome::cfg_stream_format.get().c_str();
+        std::size_t formatCount = 0;
+        const FormatOption* formats = formatOptions(formatCount);
+        int formatIndex = 0;
+        for (std::size_t i = 0; i < formatCount; ++i)
+            if (format == formats[i].value) { formatIndex = static_cast<int>(i); break; }
+        m_format.SetCurSel(formatIndex);
+
+        int bitrate = static_cast<int>(navidrome::cfg_max_bitrate.get());
+        std::size_t bitrateCount = 0;
+        const int* bitrates = bitrateOptions(bitrateCount);
+        int bitrateIndex = 0;
+        for (std::size_t i = 0; i < bitrateCount; ++i)
+            if (bitrates[i] == bitrate) { bitrateIndex = static_cast<int>(i); break; }
+        m_bitrate.SetCurSel(bitrateIndex);
     }
 
     void saveSettings() {
@@ -305,6 +393,18 @@ private:
         navidrome::cfg_username.set(getText(IDC_USER).c_str());
         navidrome::cfg_password.set(getText(IDC_PASS).c_str());
         navidrome::cfg_scrobble.set(IsDlgButtonChecked(IDC_SCROBBLE) == BST_CHECKED);
+
+        std::size_t formatCount = 0;
+        const FormatOption* formats = formatOptions(formatCount);
+        int fi = m_format.GetCurSel();
+        if (fi >= 0 && static_cast<std::size_t>(fi) < formatCount)
+            navidrome::cfg_stream_format.set(formats[fi].value);
+
+        std::size_t bitrateCount = 0;
+        const int* bitrates = bitrateOptions(bitrateCount);
+        int bi = m_bitrate.GetCurSel();
+        if (bi >= 0 && static_cast<std::size_t>(bi) < bitrateCount)
+            navidrome::cfg_max_bitrate.set(bitrates[bi]);
     }
 
     void OnChanged(UINT, int, HWND) { m_changed = true; notifyCb(); }
@@ -332,6 +432,7 @@ private:
         return 0;
     }
 
+    CComboBox m_format, m_bitrate;
     preferences_page_callback::ptr m_cb;
     bool m_changed = false;
 };

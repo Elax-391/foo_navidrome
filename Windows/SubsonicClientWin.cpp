@@ -15,6 +15,8 @@ namespace navidrome {
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;
     extern cfg_string cfg_custom_headers;
+    extern cfg_string cfg_stream_format;
+    extern cfg_var_modern::cfg_int cfg_max_bitrate;
 }
 
 // ---------------------------------------------------------------------------
@@ -670,7 +672,12 @@ bool navidrome::SubsonicClientWin::scrobble(const std::string& songId, bool subm
 }
 
 std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
-    return buildURL("stream.view", "id=" + urlEncode(songId));
+    // Transcoding preferences — the server falls back to its own defaults when
+    // neither is set.
+    std::string extra = "id=" + urlEncode(songId) +
+        streamTranscodeParams(cfg_stream_format.get().c_str(),
+                              static_cast<int>(cfg_max_bitrate.get()));
+    return buildURL("stream.view", extra);
 }
 
 std::string navidrome::SubsonicClientWin::coverArtURL(const std::string& id, int size) {

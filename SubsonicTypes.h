@@ -97,6 +97,28 @@ inline const char* albumListTypeName(AlbumListType type) {
 // this many ids.
 constexpr std::size_t kPlaylistChunkSize = 50;
 
+// Extra stream.view parameters for the configured transcoding preferences.
+// `format` is a Subsonic format name ("mp3", "opus", …), "raw" to force the
+// original file, or "" to leave the choice to the server. `maxBitRate` is in
+// kbps; 0 means unlimited. Returns a string starting with '&', or "" when
+// neither preference is set.
+inline std::string streamTranscodeParams(const std::string& format, int maxBitRate) {
+    std::string out;
+    if (!format.empty())  out += "&format=" + format;
+    if (maxBitRate > 0)   out += "&maxBitRate=" + std::to_string(maxBitRate);
+    return out;
+}
+
+// The codec the server will actually send for the configured format, given the
+// track's own suffix. Used as the decoder hint: transcoding to mp3 means a FLAC
+// track arrives as mp3, and hinting "track.flac" would pick the wrong decoder.
+// "raw" and "" both mean "the original file", so the track's suffix stands.
+inline std::string effectiveStreamSuffix(const std::string& format,
+                                         const std::string& trackSuffix) {
+    if (format.empty() || format == "raw") return trackSuffix;
+    return format;
+}
+
 // Extract the song id from a navidrome://track/<id>?... URI. Returns "" when
 // the path isn't one of ours. Shared so the scrobbler on both platforms maps a
 // playing metadb handle back to a Subsonic song id the same way.

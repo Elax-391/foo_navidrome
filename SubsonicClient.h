@@ -146,6 +146,7 @@ typedef NS_ENUM(NSInteger, SubsonicStarKind) {
 // URL builders — no network required
 // Returns the authenticated HTTP stream URL for foobar2000 to play directly.
 // coverArtId is embedded as a query param so the art extractor can retrieve it.
+// Carries the configured transcoding preferences (format / maxBitRate).
 - (NSString *)streamURLForSongId:(NSString *)songId coverArtId:(NSString *)coverArtId;
 // Returns cover art URL (size 0 = original)
 - (NSURL *)coverArtURLForId:(NSString *)coverArtId size:(NSInteger)size;
