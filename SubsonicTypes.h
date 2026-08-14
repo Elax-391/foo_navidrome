@@ -51,6 +51,14 @@ struct Playlist {
     double duration  = 0.0;
 };
 
+// A genre as reported by getGenres.view. Subsonic names the genre itself
+// "value" in the JSON, not "name".
+struct Genre {
+    std::string name;
+    int songCount  = 0;
+    int albumCount = 0;
+};
+
 struct SearchResults {
     std::vector<Artist> artists;
     std::vector<Album>  albums;

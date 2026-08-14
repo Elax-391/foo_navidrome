@@ -11,6 +11,7 @@ typedef NS_ENUM(NSInteger, NavidromeNodeType) {
     NavidromeNodeTypeSong,
     NavidromeNodeTypeCategory,  // Smart list (Starred, Recently Added, …)
     NavidromeNodeTypePlaylist,  // A playlist stored on the server
+    NavidromeNodeTypeGenre,     // A genre from getGenres.view
     NavidromeNodeTypeLoading,   // Placeholder while loading children
     NavidromeNodeTypeError,     // Placeholder when load fails
 };
@@ -24,6 +25,7 @@ typedef NS_ENUM(NSInteger, NavidromeCategoryKind) {
     NavidromeCategoryRecentlyPlayed,   // getAlbumList2 recent   → albums
     NavidromeCategoryRandom,           // getAlbumList2 random   → albums
     NavidromeCategoryPlaylists,        // getPlaylists.view      → playlists
+    NavidromeCategoryGenres,           // getGenres.view         → genres
 };
 
 @interface NavidromeNode : NSObject
@@ -53,6 +55,7 @@ typedef NS_ENUM(NSInteger, NavidromeCategoryKind) {
 + (instancetype)albumNode:(SubsonicAlbum *)album;
 + (instancetype)songNode:(SubsonicSong *)song;
 + (instancetype)playlistNode:(SubsonicPlaylist *)playlist;
++ (instancetype)genreNode:(SubsonicGenre *)genre;
 + (instancetype)categoryNode:(NavidromeCategoryKind)kind title:(NSString *)title;
 + (instancetype)loadingNode;
 + (instancetype)errorNodeWithMessage:(NSString *)msg;

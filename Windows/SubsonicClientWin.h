@@ -39,6 +39,12 @@ public:
     // Starred tracks (getStarred2.view).
     std::vector<Song>    getStarredSongs(std::string& outError);
 
+    // Genres (getGenres.view) and their tracks (getSongsByGenre.view). Back the
+    // browser's "Genres" category node.
+    std::vector<Genre>   getGenres(std::string& outError);
+    std::vector<Song>    getSongsForGenre(const std::string& genre, int count,
+                                          std::string& outError);
+
     // Favorites + ratings. Per-user server-side state, so it shows up in the
     // Navidrome web UI and every other Subsonic client.
     bool setStarred(bool starred, const std::string& itemId, StarKind kind,

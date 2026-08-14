@@ -13,7 +13,7 @@
 // Tree node
 // ---------------------------------------------------------------------------
 struct NavidromeNode {
-    enum Type { Artist, Album, Song, Category, Playlist, Loading, Error };
+    enum Type { Artist, Album, Song, Category, Playlist, Genre, Loading, Error };
     // Smart-list roots shown above the artist list; each maps to one Subsonic
     // endpoint (see BrowserWindow::fetchChildren).
     enum CategoryKind {
@@ -22,6 +22,7 @@ struct NavidromeNode {
         CatMostPlayed,       // getAlbumList2 frequent → albums
         CatRecentlyPlayed,   // getAlbumList2 recent   → albums
         CatRandom,           // getAlbumList2 random   → albums
+        CatGenres,           // getGenres.view         → genres
         CatPlaylists,        // getPlaylists.view      → playlists
     };
 

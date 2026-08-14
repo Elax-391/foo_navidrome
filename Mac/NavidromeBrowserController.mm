@@ -72,6 +72,17 @@ static NSString *formatDuration(NSTimeInterval secs) {
     return n;
 }
 
++ (instancetype)genreNode:(SubsonicGenre *)g {
+    NavidromeNode *n = [NavidromeNode new];
+    n.type        = NavidromeNodeTypeGenre;
+    n.nodeId      = g.name;   // getSongsByGenre keys off the name, not an id
+    n.displayName = g.name;
+    n.subtitle    = g.songCount == 1 ? @"1 track"
+                  : [NSString stringWithFormat:@"%ld tracks", (long)g.songCount];
+    n.children    = [NSMutableArray array];
+    return n;
+}
+
 + (instancetype)categoryNode:(NavidromeCategoryKind)kind title:(NSString *)title {
     NavidromeNode *n = [NavidromeNode new];
     n.type         = NavidromeNodeTypeCategory;
@@ -361,6 +372,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
         [NavidromeNode categoryNode:NavidromeCategoryMostPlayed     title:@"Most Played"],
         [NavidromeNode categoryNode:NavidromeCategoryRecentlyPlayed title:@"Recently Played"],
         [NavidromeNode categoryNode:NavidromeCategoryRandom         title:@"Random Albums"],
+        [NavidromeNode categoryNode:NavidromeCategoryGenres         title:@"Genres"],
         [NavidromeNode categoryNode:NavidromeCategoryPlaylists      title:@"Playlists"],
     ];
 }
@@ -418,6 +430,15 @@ static NSString *formatDuration(NSTimeInterval secs) {
                 [childNodes addObject:[NavidromeNode songNode:s]];
             break;
         }
+        case NavidromeNodeTypeGenre: {
+            // getSongsByGenre is paged; 500 covers all but the largest genres
+            // and keeps a single request per expansion.
+            for (SubsonicSong *s in [client getSongsForGenre:node.nodeId
+                                                       count:500
+                                                       error:outError])
+                [childNodes addObject:[NavidromeNode songNode:s]];
+            break;
+        }
         case NavidromeNodeTypeCategory: {
             if (node.categoryKind == NavidromeCategoryStarred) {
                 for (SubsonicSong *s in [client getStarredSongsWithError:outError])
@@ -425,6 +446,9 @@ static NSString *formatDuration(NSTimeInterval secs) {
             } else if (node.categoryKind == NavidromeCategoryPlaylists) {
                 for (SubsonicPlaylist *p in [client getPlaylistsWithError:outError])
                     [childNodes addObject:[NavidromeNode playlistNode:p]];
+            } else if (node.categoryKind == NavidromeCategoryGenres) {
+                for (SubsonicGenre *g in [client getGenresWithError:outError])
+                    [childNodes addObject:[NavidromeNode genreNode:g]];
             } else {
                 NSString *type = @"newest";
                 if (node.categoryKind == NavidromeCategoryMostPlayed)     type = @"frequent";

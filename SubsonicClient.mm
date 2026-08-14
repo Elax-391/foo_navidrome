@@ -61,6 +61,12 @@ static void NavidromeApplyCustomHeaders(NSMutableURLRequest *req) {
 }
 @end
 
+@implementation SubsonicGenre
+- (NSString *)description {
+    return [NSString stringWithFormat:@"<SubsonicGenre %@>", _name];
+}
+@end
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -398,6 +404,42 @@ static SubsonicAlbum *parseAlbum(NSDictionary *a) {
         song.starred = YES;   // getStarred2 omits the "starred" field per item
         [result addObject:song];
     }
+    return result;
+}
+
+- (NSArray<SubsonicGenre *> *)getGenresWithError:(NSError **)error {
+    NSURL *url = [self urlForEndpoint:@"getGenres.view" params:@""];
+    NSDictionary *root = [self fetchJSON:url error:error];
+    if (!root) return nil;
+
+    NSMutableArray<SubsonicGenre *> *result = [NSMutableArray array];
+    for (NSDictionary *g in asArray(root[@"genres"][@"genre"])) {
+        // Subsonic puts the genre name in "value"; skip the empty "no genre"
+        // bucket some servers report.
+        NSString *name = g[@"value"] ?: @"";
+        if (name.length == 0) continue;
+        SubsonicGenre *genre = [[SubsonicGenre alloc] init];
+        genre.name       = name;
+        genre.songCount  = [g[@"songCount"] integerValue];
+        genre.albumCount = [g[@"albumCount"] integerValue];
+        [result addObject:genre];
+    }
+    return result;
+}
+
+- (NSArray<SubsonicSong *> *)getSongsForGenre:(NSString *)genre
+                                        count:(NSInteger)count
+                                        error:(NSError **)error {
+    if (genre.length == 0) return @[];
+    NSString *params = [NSString stringWithFormat:@"genre=%@&count=%ld",
+                        urlEncode(genre), (long)count];
+    NSURL *url = [self urlForEndpoint:@"getSongsByGenre.view" params:params];
+    NSDictionary *root = [self fetchJSON:url error:error];
+    if (!root) return nil;
+
+    NSMutableArray<SubsonicSong *> *result = [NSMutableArray array];
+    for (NSDictionary *s in asArray(root[@"songsByGenre"][@"song"]))
+        [result addObject:parseSong(s)];
     return result;
 }
 

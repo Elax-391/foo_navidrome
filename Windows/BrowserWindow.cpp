@@ -140,6 +140,7 @@ static std::vector<std::shared_ptr<NavidromeNode>> buildCategoryNodes() {
         { NavidromeNode::CatMostPlayed,     "Most Played"      },
         { NavidromeNode::CatRecentlyPlayed, "Recently Played"  },
         { NavidromeNode::CatRandom,         "Random Albums"    },
+        { NavidromeNode::CatGenres,         "Genres"           },
         { NavidromeNode::CatPlaylists,      "Playlists"        },
     };
 
@@ -228,9 +229,25 @@ BrowserWindow::fetchChildren(const std::shared_ptr<NavidromeNode>& node,
         case NavidromeNode::Playlist:
             for (auto& s : client.getPlaylistSongs(node->id, outError)) addSong(s);
             break;
+        case NavidromeNode::Genre:
+            // getSongsByGenre is paged; 500 covers all but the largest genres
+            // and keeps a single request per expansion.
+            for (auto& s : client.getSongsForGenre(node->id, 500, outError)) addSong(s);
+            break;
         case NavidromeNode::Category:
             if (node->category == NavidromeNode::CatStarred) {
                 for (auto& s : client.getStarredSongs(outError)) addSong(s);
+            } else if (node->category == NavidromeNode::CatGenres) {
+                for (auto& g : client.getGenres(outError)) {
+                    auto n = std::make_shared<NavidromeNode>();
+                    n->type        = NavidromeNode::Genre;
+                    // getSongsByGenre keys off the name, not an id.
+                    n->id          = g.name;
+                    n->displayName = g.name;
+                    n->subtitle    = std::to_string(g.songCount) +
+                                     (g.songCount == 1 ? " track" : " tracks");
+                    out.push_back(n);
+                }
             } else if (node->category == NavidromeNode::CatPlaylists) {
                 for (auto& p : client.getPlaylists(outError)) {
                     auto n = std::make_shared<NavidromeNode>();

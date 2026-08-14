@@ -32,10 +32,13 @@ Beyond browse/search/stream, both clients implement — with the same method nam
 | Smart lists | `getAlbumList2.view` (newest/frequent/recent/random), `getStarred2.view` | Category nodes above the artist list in both browsers |
 | Server playlists | `getPlaylists.view`, `getPlaylist.view` | "Playlists" category node → playlist nodes → songs |
 | Playlist upload | `createPlaylist.view` + `updatePlaylist.view` | "Send Active Playlist to Navidrome" context-menu item |
+| Genres | `getGenres.view`, `getSongsByGenre.view` | "Genres" category node → genre nodes → songs |
 | Favorites | `star.view` / `unstar.view` | Star / Unstar context-menu items; `★ ` prefix on the row |
 | Ratings | `setRating.view` | Rating submenu (None, 1-5); rendered as trailing stars |
 
 Playlist upload chunks song ids **50 per request** (create with the first chunk, then `updatePlaylist` for the rest). Subsonic passes ids on the query string, and the Windows client's `WinHttpCrackUrl` path buffer is 4096 wchars — a 200-track playlist in one URL silently truncates.
+
+`getGenres.view` reports the genre name in the JSON field **`value`**, not `name`, and `getSongsByGenre` keys off that name (there is no genre id) — so `NavidromeNode.id` for a genre row holds the genre string itself.
 
 Credentials persist via `cfg_string` (foobar2000 config store). Password is sent via Subsonic token auth (md5 of password + salt) by `SubsonicClient`.
 

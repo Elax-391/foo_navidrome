@@ -466,6 +466,43 @@ navidrome::SubsonicClientWin::getStarredSongs(std::string& outError) {
     return result;
 }
 
+std::vector<navidrome::Genre>
+navidrome::SubsonicClientWin::getGenres(std::string& outError) {
+    std::string body = httpGet(buildURL("getGenres.view"), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Genre> result;
+    for (auto& g : jarr(root, "genre")) {
+        Genre gen;
+        // Subsonic puts the genre name in "value"; skip the empty "no genre"
+        // bucket some servers report.
+        gen.name = jstr(g, "value");
+        if (gen.name.empty()) continue;
+        gen.songCount  = jint(g, "songCount");
+        gen.albumCount = jint(g, "albumCount");
+        result.push_back(std::move(gen));
+    }
+    return result;
+}
+
+std::vector<navidrome::Song>
+navidrome::SubsonicClientWin::getSongsForGenre(const std::string& genre, int count,
+                                                std::string& outError) {
+    if (genre.empty()) return {};
+    std::string params = "genre=" + urlEncode(genre) + "&count=" + std::to_string(count);
+    std::string body = httpGet(buildURL("getSongsByGenre.view", params), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Song> result;
+    for (auto& s : jarr(root, "song"))
+        result.push_back(parseSongObj(s));
+    return result;
+}
+
 bool navidrome::SubsonicClientWin::setStarred(bool starred, const std::string& itemId,
                                                StarKind kind, std::string& outError) {
     if (itemId.empty()) return false;

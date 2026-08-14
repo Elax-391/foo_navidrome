@@ -49,6 +49,14 @@
 @property (nonatomic, assign) NSTimeInterval duration;
 @end
 
+// A genre from getGenres.view. Subsonic calls the genre itself "value" in the
+// JSON, not "name".
+@interface SubsonicGenre : NSObject
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, assign) NSInteger songCount;
+@property (nonatomic, assign) NSInteger albumCount;
+@end
+
 // Item kinds accepted by star.view / unstar.view — Subsonic names the query
 // parameter differently per kind (id / albumId / artistId).
 typedef NS_ENUM(NSInteger, SubsonicStarKind) {
@@ -90,6 +98,13 @@ typedef NS_ENUM(NSInteger, SubsonicStarKind) {
 // Starred songs (getStarred2.view). Albums/artists from the same response are
 // ignored — the Starred node lists tracks.
 - (NSArray<SubsonicSong *> *)getStarredSongsWithError:(NSError **)error;
+
+// Genres (getGenres.view) and their tracks (getSongsByGenre.view). Back the
+// browser's "Genres" category node.
+- (NSArray<SubsonicGenre *> *)getGenresWithError:(NSError **)error;
+- (NSArray<SubsonicSong *> *)getSongsForGenre:(NSString *)genre
+                                        count:(NSInteger)count
+                                        error:(NSError **)error;
 
 // Favorites + ratings. Both are per-user server-side state, so they show up in
 // the Navidrome web UI and every other Subsonic client.

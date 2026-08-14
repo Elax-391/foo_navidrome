@@ -12,7 +12,7 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 ## Features
 
 - Browse your entire music library: Artists → Albums → Songs
-- **Smart lists** at the top of the tree: ★ Starred, Recently Added, Most Played, Recently Played, Random Albums, and your **server-side playlists**
+- **Smart lists** at the top of the tree: ★ Starred, Recently Added, Most Played, Recently Played, Random Albums, **Genres**, and your **server-side playlists**
 - **Scrobbling**: plays are reported back to Navidrome, so play counts, "Recently Played" and any Last.fm / ListenBrainz relay the server has configured stay in sync (toggle in Preferences)
 - **Favorites and ratings** from the right-click menu — Star / Unstar and a 0-5 star rating, stored per-user on the server so they show up in the web UI and on your phone
 - **Send Active Playlist to Navidrome** from the right-click menu — uploads the active foobar2000 playlist under the same name
@@ -133,7 +133,7 @@ Two ways to open the browser:
 
 Then:
 - Expand an artist to see albums, expand an album to see songs
-- Expand a smart list (★ Starred, Recently Added, Most Played, Recently Played, Random Albums) or **Playlists** to browse without digging through artists
+- Expand a smart list (★ Starred, Recently Added, Most Played, Recently Played, Random Albums), **Genres** or **Playlists** to browse without digging through artists
 - Select one or more items and click **Add to Playlist** or **Play Now**
 - Double-click a song to play it immediately
 - Use the search field to search across your library
