@@ -39,6 +39,12 @@ public:
     // Starred tracks (getStarred2.view).
     std::vector<Song>    getStarredSongs(std::string& outError);
 
+    // Genres (getGenres.view) and their tracks (getSongsByGenre.view). Back the
+    // browser's "Genres" category node.
+    std::vector<Genre>   getGenres(std::string& outError);
+    std::vector<Song>    getSongsForGenre(const std::string& genre, int count,
+                                          std::string& outError);
+
     // Favorites + ratings. Per-user server-side state, so it shows up in the
     // Navidrome web UI and every other Subsonic client.
     bool setStarred(bool starred, const std::string& itemId, StarKind kind,
@@ -50,15 +56,33 @@ public:
     std::vector<Playlist> getPlaylists(std::string& outError);
     std::vector<Song>     getPlaylistSongs(const std::string& playlistId,
                                            std::string& outError);
-    bool createPlaylist(const std::string& name,
-                        const std::vector<std::string>& songIds,
+    // Creates a playlist and returns its id ("" on failure — check outError,
+    // which stays empty when the server just didn't echo an id back).
+    // songIds may be empty to create an empty playlist.
+    std::string createPlaylist(const std::string& name,
+                               const std::vector<std::string>& songIds,
+                               std::string& outError);
+    // Appends songs to an existing playlist (updatePlaylist.view songIdToAdd).
+    bool addToPlaylist(const std::string& playlistId,
+                       const std::vector<std::string>& songIds,
+                       std::string& outError);
+    // Removes entries by their zero-based position. Indexes are applied
+    // highest-first so earlier removals can't shift the later ones.
+    bool removeFromPlaylist(const std::string& playlistId,
+                            const std::vector<int>& indexes,
+                            std::string& outError);
+    bool renamePlaylist(const std::string& playlistId, const std::string& name,
                         std::string& outError);
+    bool deletePlaylist(const std::string& playlistId, std::string& outError);
 
     // Scrobble a play: submission=false marks "now playing", submission=true
     // registers the play (play count, Last.fm / ListenBrainz relay).
     bool scrobble(const std::string& songId, bool submission, std::string& outError);
 
+    // Carries the configured transcoding preferences (format / maxBitRate).
     std::string streamURL(const std::string& songId);
+    // download.view — always the original file, never transcoded.
+    std::string downloadURL(const std::string& songId);
     std::string coverArtURL(const std::string& id, int size = 0);
     std::string coverArtURL(const SubsonicRequestContext& context,
                             const std::string& id, int size = 0) const;
@@ -86,6 +110,12 @@ public:
                                     const std::string& url,
                                     std::size_t maxBytes,
                                     class abort_callback& abort) const;
+
+    // Streams a URL straight to disk — no size cap and no content sniffing, so
+    // it suits full-quality track downloads that must not sit in memory.
+    // destPath is a native wide path; the file is replaced if it exists.
+    bool httpDownloadToFile(const std::string& url, const std::wstring& destPath,
+                            std::string& outError) const;
 
 private:
     SubsonicClientWin() = default;

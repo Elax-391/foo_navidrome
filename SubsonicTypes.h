@@ -2,6 +2,7 @@
 // Pure C++ types shared between all platform implementations.
 // No ObjC, no Windows headers — safe to include anywhere.
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,14 @@ struct Playlist {
     double duration  = 0.0;
 };
 
+// A genre as reported by getGenres.view. Subsonic names the genre itself
+// "value" in the JSON, not "name".
+struct Genre {
+    std::string name;
+    int songCount  = 0;
+    int albumCount = 0;
+};
+
 struct SearchResults {
     std::vector<Artist> artists;
     std::vector<Album>  albums;
@@ -80,6 +89,53 @@ inline const char* albumListTypeName(AlbumListType type) {
         case AlbumListType::Starred:  return "starred";
         default:                      return "newest";
     }
+}
+
+// Subsonic passes ids on the query string, so a long playlist would blow past
+// typical server URL limits (and the Windows client's 4096-wchar WinHttpCrackUrl
+// path buffer). Every playlist mutation that takes a list is sent in chunks of
+// this many ids.
+constexpr std::size_t kPlaylistChunkSize = 50;
+
+// Extra stream.view parameters for the configured transcoding preferences.
+// `format` is a Subsonic format name ("mp3", "opus", …), "raw" to force the
+// original file, or "" to leave the choice to the server. `maxBitRate` is in
+// kbps; 0 means unlimited. Returns a string starting with '&', or "" when
+// neither preference is set.
+inline std::string streamTranscodeParams(const std::string& format, int maxBitRate) {
+    std::string out;
+    if (!format.empty())  out += "&format=" + format;
+    if (maxBitRate > 0)   out += "&maxBitRate=" + std::to_string(maxBitRate);
+    return out;
+}
+
+// The codec the server will actually send for the configured format, given the
+// track's own suffix. Used as the decoder hint: transcoding to mp3 means a FLAC
+// track arrives as mp3, and hinting "track.flac" would pick the wrong decoder.
+// "raw" and "" both mean "the original file", so the track's suffix stands.
+inline std::string effectiveStreamSuffix(const std::string& format,
+                                         const std::string& trackSuffix) {
+    if (format.empty() || format == "raw") return trackSuffix;
+    return format;
+}
+
+// Strip characters that are illegal in Windows / macOS file names, so a track
+// title can be used as a download file name. Also trims trailing dots/spaces,
+// which Windows silently rejects.
+inline std::string sanitizeFileName(const std::string& name) {
+    std::string out;
+    for (unsigned char c : name) {
+        switch (c) {
+            case '/': case '\\': case ':': case '*': case '?':
+            case '"': case '<':  case '>': case '|':
+                out.push_back('_');
+                break;
+            default:
+                out.push_back(static_cast<char>(c < 0x20 ? ' ' : c));
+        }
+    }
+    while (!out.empty() && (out.back() == '.' || out.back() == ' ')) out.pop_back();
+    return out.empty() ? std::string("untitled") : out;
 }
 
 // Extract the song id from a navidrome://track/<id>?... URI. Returns "" when

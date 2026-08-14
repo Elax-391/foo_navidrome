@@ -3,6 +3,7 @@
 #include "MediaEnrichmentLogic.h"
 #include <SDK/cfg_var.h>
 #include <algorithm>
+#include <functional>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
@@ -14,6 +15,8 @@ namespace navidrome {
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;
     extern cfg_string cfg_custom_headers;
+    extern cfg_string cfg_stream_format;
+    extern cfg_var_modern::cfg_int cfg_max_bitrate;
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +469,43 @@ navidrome::SubsonicClientWin::getStarredSongs(std::string& outError) {
     return result;
 }
 
+std::vector<navidrome::Genre>
+navidrome::SubsonicClientWin::getGenres(std::string& outError) {
+    std::string body = httpGet(buildURL("getGenres.view"), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Genre> result;
+    for (auto& g : jarr(root, "genre")) {
+        Genre gen;
+        // Subsonic puts the genre name in "value"; skip the empty "no genre"
+        // bucket some servers report.
+        gen.name = jstr(g, "value");
+        if (gen.name.empty()) continue;
+        gen.songCount  = jint(g, "songCount");
+        gen.albumCount = jint(g, "albumCount");
+        result.push_back(std::move(gen));
+    }
+    return result;
+}
+
+std::vector<navidrome::Song>
+navidrome::SubsonicClientWin::getSongsForGenre(const std::string& genre, int count,
+                                                std::string& outError) {
+    if (genre.empty()) return {};
+    std::string params = "genre=" + urlEncode(genre) + "&count=" + std::to_string(count);
+    std::string body = httpGet(buildURL("getSongsByGenre.view", params), outError);
+    if (body.empty()) return {};
+    auto root = checkResponse(body, outError);
+    if (root.empty()) return {};
+
+    std::vector<Song> result;
+    for (auto& s : jarr(root, "song"))
+        result.push_back(parseSongObj(s));
+    return result;
+}
+
 bool navidrome::SubsonicClientWin::setStarred(bool starred, const std::string& itemId,
                                                StarKind kind, std::string& outError) {
     if (itemId.empty()) return false;
@@ -526,42 +566,99 @@ navidrome::SubsonicClientWin::getPlaylistSongs(const std::string& playlistId,
 // buffer (4096 wchars) and typical server URL limits cap how many fit in one
 // request — so the playlist is created with the first chunk and grown with
 // updatePlaylist.view calls.
-bool navidrome::SubsonicClientWin::createPlaylist(const std::string& name,
-                                                   const std::vector<std::string>& songIds,
-                                                   std::string& outError) {
-    if (name.empty() || songIds.empty()) return false;
-    constexpr std::size_t kChunk = 50;
+std::string navidrome::SubsonicClientWin::createPlaylist(
+        const std::string& name, const std::vector<std::string>& songIds,
+        std::string& outError) {
+    if (name.empty()) return "";
+    constexpr std::size_t kChunk = kPlaylistChunkSize;
 
     std::size_t first = (std::min)(kChunk, songIds.size());
     std::string params = "name=" + urlEncode(name);
     for (std::size_t i = 0; i < first; ++i) params += "&songId=" + urlEncode(songIds[i]);
 
     std::string body = httpGet(buildURL("createPlaylist.view", params), outError);
-    if (body.empty()) return false;
+    if (body.empty()) return "";
     auto root = checkResponse(body, outError);
-    if (root.empty()) return false;
-
-    if (songIds.size() <= kChunk) return true;
+    if (root.empty()) return "";
 
     // Navidrome echoes the created playlist back; without its id the remaining
-    // tracks can't be appended.
+    // tracks can't be appended (and the caller can't act on the new playlist).
     std::string playlistId;
     auto created = jarr(root, "playlist");
     if (!created.empty()) playlistId = jstr(created[0], "id");
+
     if (playlistId.empty()) {
-        outError = "Playlist created, but the server returned no id — "
-                   "only the first " + std::to_string(kChunk) + " tracks were added";
-        return false;
+        if (songIds.size() > kChunk) {
+            outError = "Playlist created, but the server returned no id — "
+                       "only the first " + std::to_string(kChunk) + " tracks were added";
+        }
+        // Everything made it in; we just have no id to hand back. outError stays
+        // empty so the caller can tell this apart from a real failure.
+        return "";
     }
 
-    for (std::size_t i = kChunk; i < songIds.size(); i += kChunk) {
+    if (songIds.size() <= kChunk) return playlistId;
+
+    std::vector<std::string> rest(songIds.begin() + kChunk, songIds.end());
+    if (!addToPlaylist(playlistId, rest, outError)) return "";
+    return playlistId;
+}
+
+bool navidrome::SubsonicClientWin::addToPlaylist(const std::string& playlistId,
+                                                  const std::vector<std::string>& songIds,
+                                                  std::string& outError) {
+    if (playlistId.empty() || songIds.empty()) return false;
+    constexpr std::size_t kChunk = kPlaylistChunkSize;
+
+    for (std::size_t i = 0; i < songIds.size(); i += kChunk) {
         std::string upd = "playlistId=" + urlEncode(playlistId);
         for (std::size_t j = i; j < (std::min)(i + kChunk, songIds.size()); ++j)
             upd += "&songIdToAdd=" + urlEncode(songIds[j]);
-        std::string updBody = httpGet(buildURL("updatePlaylist.view", upd), outError);
-        if (updBody.empty() || checkResponse(updBody, outError).empty()) return false;
+        std::string body = httpGet(buildURL("updatePlaylist.view", upd), outError);
+        if (body.empty() || checkResponse(body, outError).empty()) return false;
     }
     return true;
+}
+
+// songIndexToRemove refers to a track's position in the playlist as it stands
+// when the request is served, so removals are sent highest-index-first: dropping
+// a later entry never shifts an earlier one.
+bool navidrome::SubsonicClientWin::removeFromPlaylist(const std::string& playlistId,
+                                                       const std::vector<int>& indexes,
+                                                       std::string& outError) {
+    if (playlistId.empty() || indexes.empty()) return false;
+    constexpr std::size_t kChunk = kPlaylistChunkSize;
+
+    std::vector<int> sorted = indexes;
+    std::sort(sorted.begin(), sorted.end(), std::greater<int>());
+
+    for (std::size_t i = 0; i < sorted.size(); i += kChunk) {
+        std::string upd = "playlistId=" + urlEncode(playlistId);
+        for (std::size_t j = i; j < (std::min)(i + kChunk, sorted.size()); ++j)
+            upd += "&songIndexToRemove=" + std::to_string(sorted[j]);
+        std::string body = httpGet(buildURL("updatePlaylist.view", upd), outError);
+        if (body.empty() || checkResponse(body, outError).empty()) return false;
+    }
+    return true;
+}
+
+bool navidrome::SubsonicClientWin::renamePlaylist(const std::string& playlistId,
+                                                   const std::string& name,
+                                                   std::string& outError) {
+    if (playlistId.empty() || name.empty()) return false;
+    std::string params = "playlistId=" + urlEncode(playlistId) + "&name=" + urlEncode(name);
+    std::string body = httpGet(buildURL("updatePlaylist.view", params), outError);
+    if (body.empty()) return false;
+    return !checkResponse(body, outError).empty();
+}
+
+bool navidrome::SubsonicClientWin::deletePlaylist(const std::string& playlistId,
+                                                   std::string& outError) {
+    if (playlistId.empty()) return false;
+    std::string body = httpGet(buildURL("deletePlaylist.view", "id=" + urlEncode(playlistId)),
+                               outError);
+    if (body.empty()) return false;
+    return !checkResponse(body, outError).empty();
 }
 
 bool navidrome::SubsonicClientWin::scrobble(const std::string& songId, bool submission,
@@ -575,7 +672,16 @@ bool navidrome::SubsonicClientWin::scrobble(const std::string& songId, bool subm
 }
 
 std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
-    return buildURL("stream.view", "id=" + urlEncode(songId));
+    // Transcoding preferences — the server falls back to its own defaults when
+    // neither is set.
+    std::string extra = "id=" + urlEncode(songId) +
+        streamTranscodeParams(cfg_stream_format.get().c_str(),
+                              static_cast<int>(cfg_max_bitrate.get()));
+    return buildURL("stream.view", extra);
+}
+
+std::string navidrome::SubsonicClientWin::downloadURL(const std::string& songId) {
+    return buildURL("download.view", "id=" + urlEncode(songId));
 }
 
 std::string navidrome::SubsonicClientWin::coverArtURL(const std::string& id, int size) {
@@ -588,6 +694,105 @@ std::string navidrome::SubsonicClientWin::coverArtURL(
         const SubsonicRequestContext& context, const std::string& id, int size) const {
     return buildCoverArtUrl(context.serverUrl, context.username, context.password,
         context.salt, id, size);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming download to disk — separate from both httpGet() (which builds the
+// body into a std::string) and httpGetBinary() (which caps the size and sniffs
+// for image content). A full-quality track is neither text nor small.
+// ---------------------------------------------------------------------------
+bool navidrome::SubsonicClientWin::httpDownloadToFile(const std::string& urlStr,
+                                                       const std::wstring& destPath,
+                                                       std::string& outError) const {
+    std::wstring wurl = toWide(urlStr);
+
+    URL_COMPONENTS uc = {};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = {}, path[4096] = {};
+    uc.lpszHostName = host; uc.dwHostNameLength = 256;
+    uc.lpszUrlPath  = path; uc.dwUrlPathLength  = 4096;
+
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) { outError = "Invalid URL"; return false; }
+
+    HINTERNET hSess = WinHttpOpen(L"foo_navidrome/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSess) { outError = "WinHttpOpen failed"; return false; }
+    // A track download can run far longer than an API call.
+    WinHttpSetTimeouts(hSess, 0, 15000, 15000, 300000);
+    applySecureProtocols(hSess);
+
+    HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
+    if (!hConn) {
+        WinHttpCloseHandle(hSess);
+        outError = "Connect failed";
+        return false;
+    }
+
+    DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path,
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!hReq) {
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        outError = "WinHttpOpenRequest failed";
+        return false;
+    }
+
+    std::wstring hdrs = customHeadersWide();
+    if (!hdrs.empty())
+        WinHttpAddRequestHeaders(hReq, hdrs.c_str(), (DWORD)-1,
+            WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+    bool ok = false;
+    if (WinHttpSendRequest(hReq, nullptr, 0, nullptr, 0, 0, 0) &&
+        WinHttpReceiveResponse(hReq, nullptr)) {
+        DWORD status = 0, sz = sizeof(status);
+        WinHttpQueryHeaders(hReq,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            nullptr, &status, &sz, nullptr);
+        if (status != 200) {
+            outError = "HTTP " + std::to_string(status);
+        } else {
+            HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                outError = "Cannot create file (err=" +
+                           std::to_string(GetLastError()) + ")";
+            } else {
+                ok = true;
+                DWORD avail = 0;
+                while (ok && WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
+                    std::vector<char> chunk(avail);
+                    DWORD read = 0;
+                    if (!WinHttpReadData(hReq, chunk.data(), avail, &read)) {
+                        outError = "Read failed (err=" +
+                                   std::to_string(GetLastError()) + ")";
+                        ok = false;
+                        break;
+                    }
+                    DWORD written = 0;
+                    if (!WriteFile(hFile, chunk.data(), read, &written, nullptr) ||
+                        written != read) {
+                        outError = "Write failed (err=" +
+                                   std::to_string(GetLastError()) + ")";
+                        ok = false;
+                        break;
+                    }
+                }
+                CloseHandle(hFile);
+                // Don't leave a truncated file behind on a mid-stream failure.
+                if (!ok) DeleteFileW(destPath.c_str());
+            }
+        }
+    } else {
+        outError = "Request failed (err=" + std::to_string(GetLastError()) + ")";
+    }
+
+    WinHttpCloseHandle(hReq);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return ok;
 }
 
 // ---------------------------------------------------------------------------

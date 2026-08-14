@@ -2,6 +2,7 @@
 #include "NavidromeInputWin.h"
 #include "SubsonicClientWin.h"
 #include "MediaEnrichmentLogic.h"
+#include <SDK/cfg_var.h>
 #include <SDK/input_impl.h>
 #include <SDK/file.h>
 #include <SDK/http_client.h>
@@ -19,6 +20,11 @@
 // nested decoder. Without custom headers it falls back to letting foobar open
 // the URL directly (Content-Type sniffing), as before.
 // ---------------------------------------------------------------------------
+
+// Defined in NavidromePluginWin.cpp
+namespace navidrome {
+    extern cfg_string cfg_stream_format;
+}
 
 namespace {
 
@@ -65,11 +71,15 @@ public:
 
         // Our own file has no audio extension in the URL, so give the decoder a
         // suffix-based hint (track.<suffix>) to pick the codec; it still reads
-        // bytes from httpFile, not from the hint path.
+        // bytes from httpFile, not from the hint path. When a transcoding format
+        // is configured the server sends that codec, not the track's own —
+        // hinting the original suffix would pick the wrong decoder.
+        std::string effSuffix = navidrome::effectiveStreamSuffix(
+            navidrome::cfg_stream_format.get().c_str(), m_suffix);
         const char* hint = m_resolved_url.c_str();
         pfc::string8 hintBuf;
-        if (httpFile.is_valid() && !m_suffix.empty()) {
-            hintBuf << "track." << m_suffix.c_str();
+        if (httpFile.is_valid() && !effSuffix.empty()) {
+            hintBuf << "track." << effSuffix.c_str();
             hint = hintBuf.c_str();
         }
 

@@ -1,4 +1,7 @@
 #include "../MediaEnrichmentLogic.h"
+// SubsonicTypes.h is pure C++ (no SDK, no Windows headers), so its helpers can
+// be exercised from this standalone host executable too.
+#include "../../SubsonicTypes.h"
 
 #include <cstdint>
 #include <iostream>
@@ -140,6 +143,42 @@ void testConfig() {
         "config generation is stable");
 }
 
+void testTranscodeParams() {
+    using navidrome::streamTranscodeParams;
+    check(streamTranscodeParams("", 0).empty(),
+        "no preferences means no extra stream params");
+    check(streamTranscodeParams("mp3", 0) == "&format=mp3",
+        "format alone is emitted");
+    check(streamTranscodeParams("", 192) == "&maxBitRate=192",
+        "bitrate alone is emitted");
+    check(streamTranscodeParams("opus", 128) == "&format=opus&maxBitRate=128",
+        "both preferences are emitted in order");
+    check(streamTranscodeParams("raw", 0) == "&format=raw",
+        "raw is passed through as a format");
+
+    using navidrome::effectiveStreamSuffix;
+    check(effectiveStreamSuffix("", "flac") == "flac",
+        "server default keeps the track's own codec");
+    check(effectiveStreamSuffix("raw", "flac") == "flac",
+        "raw keeps the track's own codec");
+    check(effectiveStreamSuffix("mp3", "flac") == "mp3",
+        "transcoding wins over the track's codec for the decoder hint");
+    check(effectiveStreamSuffix("mp3", "").empty() == false,
+        "transcoding supplies a codec even when the track has none");
+}
+
+void testFileNames() {
+    using navidrome::sanitizeFileName;
+    check(sanitizeFileName("AC/DC: Back in Black?") == "AC_DC_ Back in Black_",
+        "path and reserved characters are replaced");
+    check(sanitizeFileName("trailing dots...") == "trailing dots",
+        "trailing dots are trimmed (Windows rejects them)");
+    check(sanitizeFileName("   ") == "untitled",
+        "an all-trimmed name falls back to a placeholder");
+    check(sanitizeFileName(u8"中文 title") == u8"中文 title",
+        "non-ASCII names survive untouched");
+}
+
 } // namespace
 
 int main() {
@@ -148,6 +187,8 @@ int main() {
     testClassification();
     testCache();
     testConfig();
+    testTranscodeParams();
+    testFileNames();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;

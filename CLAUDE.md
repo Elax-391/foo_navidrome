@@ -32,10 +32,16 @@ Beyond browse/search/stream, both clients implement — with the same method nam
 | Smart lists | `getAlbumList2.view` (newest/frequent/recent/random), `getStarred2.view` | Category nodes above the artist list in both browsers |
 | Server playlists | `getPlaylists.view`, `getPlaylist.view` | "Playlists" category node → playlist nodes → songs |
 | Playlist upload | `createPlaylist.view` + `updatePlaylist.view` | "Send Active Playlist to Navidrome" context-menu item |
+| Playlist CRUD | `updatePlaylist.view` (`songIdToAdd` / `songIndexToRemove` / `name`), `deletePlaylist.view` | "Add to Navidrome Playlist ▸" submenu (+ "New Playlist…"), "Remove from Playlist", "Rename Playlist…", "Delete Playlist…" |
+| Genres | `getGenres.view`, `getSongsByGenre.view` | "Genres" category node → genre nodes → songs |
 | Favorites | `star.view` / `unstar.view` | Star / Unstar context-menu items; `★ ` prefix on the row |
 | Ratings | `setRating.view` | Rating submenu (None, 1-5); rendered as trailing stars |
+| Transcoding | `stream.view` `format` / `maxBitRate` | Two prefs combo boxes (`cfg_stream_format`, `cfg_max_bitrate`) |
+| Download originals | `download.view` | "Download Original Files…" context-menu item; folder picker, never transcoded |
 
-Playlist upload chunks song ids **50 per request** (create with the first chunk, then `updatePlaylist` for the rest). Subsonic passes ids on the query string, and the Windows client's `WinHttpCrackUrl` path buffer is 4096 wchars — a 200-track playlist in one URL silently truncates.
+Every playlist mutation that takes a list chunks ids **50 per request** (`navidrome::kPlaylistChunkSize` in `SubsonicTypes.h`). Subsonic passes ids on the query string, and the Windows client's `WinHttpCrackUrl` path buffer is 4096 wchars — a 200-track playlist in one URL silently truncates.
+
+`getGenres.view` reports the genre name in the JSON field **`value`**, not `name`, and `getSongsByGenre` keys off that name (there is no genre id) — so `NavidromeNode.id` for a genre row holds the genre string itself.
 
 Credentials persist via `cfg_string` (foobar2000 config store). Password is sent via Subsonic token auth (md5 of password + salt) by `SubsonicClient`.
 
@@ -122,6 +128,14 @@ Automated via `.github/workflows/release.yml` on every push to `main`. Uses [sem
 ## Gotchas
 
 - **`MediaEnrichmentLogic.cpp` / `EsLyricBridge.cpp` must stay `<PrecompiledHeader>NotUsing</PrecompiledHeader>` in `foo_navidrome.vcxproj`.** The rest of `Windows/*.cpp` uses the shared `stdafx.h` PCH. `MediaEnrichmentLogic.cpp` deliberately doesn't include `stdafx.h` at all (kept SDK-free so `Windows/tests/MediaEnrichmentTests.vcxproj` can compile it standalone, no foobar SDK/PCH involved); `EsLyricBridge.cpp` does include `stdafx.h` but is marked `NotUsing` to match. Don't "clean up" either without checking both project files still build.
+
+- **Transcoding changes the codec, so the decoder hint has to follow.** `cfg_stream_format` is appended to `stream.view` as `format=`, which means a FLAC track can arrive as mp3. Both input handlers pass the track's suffix through `navidrome::effectiveStreamSuffix()` before building the `track.<suffix>` hint for `g_open_for_decoding` — hinting the *stored* codec would pick the wrong decoder. `"raw"` and `""` both mean "original file", so they leave the suffix alone. The hint only matters on the custom-headers path (where we open the stream ourselves); without headers foobar sniffs Content-Type.
+
+- **`songIndexToRemove` is positional and evaluated per request**, so removals are sent **highest index first** (`removeIndexes:fromPlaylist:` / `removeFromPlaylist`). Ascending order would shift every later index by one as the earlier entries disappear — and with >50 removals the chunking makes that a silent wrong-track deletion, not just a failure.
+
+- **Reading the tree control off the UI thread is a cross-thread call.** `BrowserWindow::selectedNodes()` walks the `CTreeViewCtrl`, so every background action captures the selection on the UI thread first and passes the `vector<shared_ptr<NavidromeNode>>` into the worker (see `collectSongIdsDeep`, which deliberately takes pre-captured nodes rather than calling `selectedNodes()` itself). The same rule applies on macOS to `-selectedNodes` / `-parentForItem:`.
+
+- **`cfg_int` has the same legacy/modern ambiguity as `cfg_bool`** — write `cfg_var_modern::cfg_int` (used by `cfg_max_bitrate`). Unqualified it resolves to `cfg_var_legacy::cfg_int_t<t_int32>`, which has no `set()` and serializes differently.
 
 - **`cfg_bool` must be written as `cfg_var_modern::cfg_bool`.** Unqualified, it resolves to the legacy `cfg_var_legacy::cfg_int_t<bool>` on the Windows SDK headers — which has no `set()`, so the Windows build fails while macOS (where the modern one wins) compiles fine. The two flavours also serialize differently, so a var declared as legacy on one platform and modern on the other would not round-trip. `cfg_string` happens not to have this ambiguity; `cfg_bool` does. Applies to `cfg_scrobble` in `NavidromePlugin.mm` / `NavidromePluginWin.cpp` and its `extern` in `Mac/NavidromePreferencesController.mm`.
 

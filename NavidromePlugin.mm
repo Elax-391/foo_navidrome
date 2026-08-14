@@ -23,6 +23,8 @@ static constexpr GUID guid_library_viewer  = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xa
 static constexpr GUID guid_library_prefs   = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x09 } };
 static constexpr GUID guid_cfg_custom_headers = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0a } };
 static constexpr GUID guid_cfg_scrobble    = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0b } };
+static constexpr GUID guid_cfg_stream_format = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0c } };
+static constexpr GUID guid_cfg_max_bitrate = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0d } };
 
 // ---------------------------------------------------------------------------
 // Config variables (exported so SubsonicClient.mm can access them)
@@ -42,6 +44,16 @@ namespace navidrome {
     // cfg_int_t<bool> (no set()) on the Windows SDK headers, and the two
     // flavours serialize differently — both platforms must use the same one.
     cfg_var_modern::cfg_bool cfg_scrobble(guid_cfg_scrobble, true);
+
+    // Transcoding preferences, applied to every stream.view request.
+    // cfg_stream_format: "" = let the server decide, "raw" = never transcode,
+    // otherwise a Subsonic format name ("mp3", "opus", "aac", …).
+    // cfg_max_bitrate: kbps ceiling; 0 = unlimited.
+    // Qualified for the same reason as cfg_scrobble — an unqualified cfg_int
+    // resolves to the legacy cfg_int_t<t_int32>, which has no set() and
+    // serializes differently.
+    cfg_string cfg_stream_format(guid_cfg_stream_format, "");
+    cfg_var_modern::cfg_int cfg_max_bitrate(guid_cfg_max_bitrate, 0);
 }
 
 // ---------------------------------------------------------------------------
