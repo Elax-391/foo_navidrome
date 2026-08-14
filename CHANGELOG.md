@@ -1,3 +1,18 @@
+## [1.6.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.5.0...v1.6.0) (2026-08-14)
+
+
+### Features
+
+* browse the library by genre ([63cb4f7](https://github.com/santiagorod92/foo_navidrome/commit/63cb4f7fc171253addf461c5ef2e8c536f280841))
+* download original files from the browser ([b879a30](https://github.com/santiagorod92/foo_navidrome/commit/b879a30962f1893faa27507f2690c406b2159f94))
+* manage server playlists from the browser ([8224da6](https://github.com/santiagorod92/foo_navidrome/commit/8224da63861efb84d64215b5c82dcaaf02699d18))
+* pick the streaming format and bitrate ([2c44673](https://github.com/santiagorod92/foo_navidrome/commit/2c446732acdd45e6c1f7a8bedb6f3379c4dda3da))
+
+
+### Bug Fixes
+
+* carry the track's codec suffix in navidrome:// URIs on macOS ([6d2065c](https://github.com/santiagorod92/foo_navidrome/commit/6d2065c30e7ac9113b0e27ec8787c6533900e3e9))
+
 ## [1.5.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.4.1...v1.5.0) (2026-08-13)
 
 
