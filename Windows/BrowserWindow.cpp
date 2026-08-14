@@ -1,8 +1,11 @@
 #include "stdafx.h"
 #include "BrowserWindow.h"
+#include "BrowserExtrasLogic.h"
+#include "BrowserMutationHub.h"
 #include "LibraryImportLogic.h"
 #include "Localization.h"
 #include "SubsonicClientWin.h"
+#include "ServerIdentity.h"
 #include "NavidromeInputWin.h"
 #include "LibraryImporter.h"
 #include "SongMetadataProjection.h"
@@ -11,6 +14,8 @@
 #include <SDK/playable_location.h>
 #include <SDK/playback_control.h>
 #include <commctrl.h>
+#include <algorithm>
+#include <set>
 #include <utility>
 #pragma comment(lib, "comctl32.lib")
 
@@ -66,6 +71,34 @@ static std::string wToU8(const std::wstring& w) {
     WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], n, nullptr, nullptr);
     if (!s.empty() && s.back() == 0) s.pop_back();
     return s;
+}
+
+static std::string mutationKey(navidrome::BrowserMutationKind mutation,
+                               navidrome::FavoriteKind kind,
+                               const std::string& id) {
+    char mutationPrefix = mutation == navidrome::BrowserMutationKind::RatingChanged
+        ? 'g' : 'f';
+    char prefix = 's';
+    if (kind == navidrome::FavoriteKind::Album) prefix = 'a';
+    if (kind == navidrome::FavoriteKind::Artist) prefix = 'r';
+    return std::string(1, mutationPrefix) + ':' + prefix + ':' + id;
+}
+
+static std::optional<navidrome::FavoriteKind> favoriteKindForNode(
+        const std::shared_ptr<NavidromeNode>& node) {
+    if (!node) return std::nullopt;
+    if (node->type == NavidromeNode::Song) return navidrome::FavoriteKind::Song;
+    if (node->type == NavidromeNode::Album) return navidrome::FavoriteKind::Album;
+    if (node->type == NavidromeNode::Artist) return navidrome::FavoriteKind::Artist;
+    return std::nullopt;
+}
+
+static std::vector<std::string> playlistSongIds(
+        const navidrome::ServerPlaylistDetails& details) {
+    std::vector<std::string> ids;
+    ids.reserve(details.songs.size());
+    for (const auto& song : details.songs) ids.push_back(song.id);
+    return ids;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,18 +180,27 @@ LRESULT BrowserWindow::OnCreate(LPCREATESTRUCT) {
     m_dispatchState = std::make_shared<BrowserDispatchState>();
     m_dispatchState->hwnd = *this;
     m_dispatchState->alive = true;
+    m_mutationSubscription = navidrome::BrowserMutationHub::get().subscribe(
+        [this](const navidrome::BrowserMutationEvent& event) {
+            applyMutationEvent(event);
+        });
     updateActionState();
 
     return 0;
 }
 
 void BrowserWindow::OnDestroy() {
+    m_mutationSubscription.reset();
     if (m_queueCancel) m_queueCancel->store(true);
     ++m_queueOperationId;
+    ++m_mutationOperationId;
+    ++m_playlistOperationId;
     ++m_libraryRequestId;
     ++m_searchRequestId;
     ++m_displayGeneration;
     m_queueInProgress = false;
+    m_mutationInProgress = false;
+    m_playlistInProgress = false;
     m_libraryLoading = false;
     if (m_dispatchState) {
         m_dispatchState->alive = false;
@@ -170,6 +212,10 @@ void BrowserWindow::OnDestroy() {
     m_rootNodes.clear();
     m_libraryRoots.clear();
     m_deferredChildren.clear();
+    m_deferredMutationEvents.clear();
+    m_confirmedMutations.clear();
+    m_appliedMutationRevisions.clear();
+    m_mutationIdentity.clear();
 }
 
 void BrowserWindow::OnGetMinMaxInfo(LPMINMAXINFO info) {
@@ -233,30 +279,218 @@ LRESULT BrowserWindow::OnSize(UINT, CSize sz) {
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
+std::shared_ptr<NavidromeNode> BrowserWindow::makeArtistNode(
+        const navidrome::Artist& artist) {
+    auto node = std::make_shared<NavidromeNode>();
+    node->type = NavidromeNode::Artist;
+    node->id = artist.id;
+    node->displayName = artist.name;
+    node->coverArtId = artist.coverArtId;
+    node->starred = artist.starred;
+    return node;
+}
+
+std::shared_ptr<NavidromeNode> BrowserWindow::makeAlbumNode(
+        const navidrome::Album& album) {
+    auto node = std::make_shared<NavidromeNode>();
+    node->type = NavidromeNode::Album;
+    node->id = album.id;
+    node->displayName = album.name;
+    node->subtitle = album.artist;
+    node->coverArtId = album.coverArtId;
+    node->year = album.year;
+    node->starred = album.starred;
+    return node;
+}
+
+std::shared_ptr<NavidromeNode> BrowserWindow::makeSongNode(
+        const navidrome::Song& song) {
+    auto node = std::make_shared<NavidromeNode>();
+    node->type = NavidromeNode::Song;
+    node->id = song.id;
+    node->displayName = song.title;
+    node->subtitle = song.artist;
+    node->album = song.album;
+    node->coverArtId = song.coverArtId;
+    node->suffix = song.suffix;
+    node->track = song.track;
+    node->year = song.year;
+    node->duration = song.duration;
+    node->metadata = song;
+    node->childrenLoaded = true;
+    return node;
+}
+
+std::shared_ptr<NavidromeNode> BrowserWindow::makePlaylistNode(
+        const navidrome::ServerPlaylist& playlist) {
+    auto node = std::make_shared<NavidromeNode>();
+    node->type = NavidromeNode::ServerPlaylist;
+    node->id = playlist.id;
+    node->displayName = playlist.name;
+    node->coverArtId = playlist.coverArtId;
+    node->playlist = playlist;
+    return node;
+}
+
+std::vector<std::shared_ptr<NavidromeNode>> BrowserWindow::fetchChildren(
+        const std::shared_ptr<NavidromeNode>& node,
+        const navidrome::SubsonicRequestContext& context,
+        std::string& outError) {
+    std::vector<std::shared_ptr<NavidromeNode>> result;
+    auto& client = navidrome::SubsonicClientWin::get();
+    if (!node) return result;
+
+    if (node->type == NavidromeNode::Artist) {
+        for (const auto& album : client.getAlbumsForArtist(context, node->id, outError))
+            result.push_back(makeAlbumNode(album));
+    } else if (node->type == NavidromeNode::Album) {
+        for (const auto& song : client.getSongsForAlbum(context, node->id, outError))
+            result.push_back(makeSongNode(song));
+    } else if (node->type == NavidromeNode::ServerPlaylist) {
+        const auto details = client.getPlaylist(context, node->id, outError);
+        for (const auto& song : details.songs) result.push_back(makeSongNode(song));
+    } else if (node->type == NavidromeNode::NavigationGroup &&
+               node->navigationGroup == navidrome::NavigationGroupKind::ServerPlaylists) {
+        for (const auto& playlist : client.getPlaylists(context, outError))
+            result.push_back(makePlaylistNode(playlist));
+    } else if (node->type == NavidromeNode::SmartList && node->smartList) {
+        switch (*node->smartList) {
+        case navidrome::SmartListKind::StarredSongs: {
+            const auto starred = client.getStarred(context, outError);
+            for (const auto& song : starred.songs) result.push_back(makeSongNode(song));
+            break;
+        }
+        case navidrome::SmartListKind::StarredAlbums: {
+            const auto starred = client.getStarred(context, outError);
+            for (const auto& album : starred.albums) result.push_back(makeAlbumNode(album));
+            break;
+        }
+        case navidrome::SmartListKind::StarredArtists: {
+            const auto starred = client.getStarred(context, outError);
+            for (const auto& artist : starred.artists) result.push_back(makeArtistNode(artist));
+            break;
+        }
+        default: {
+            auto kind = navidrome::AlbumListKind::Newest;
+            if (*node->smartList == navidrome::SmartListKind::FrequentAlbums)
+                kind = navidrome::AlbumListKind::Frequent;
+            else if (*node->smartList == navidrome::SmartListKind::RecentAlbums)
+                kind = navidrome::AlbumListKind::Recent;
+            else if (*node->smartList == navidrome::SmartListKind::RandomAlbums)
+                kind = navidrome::AlbumListKind::Random;
+            for (const auto& album : client.getAlbumList(context, kind, 100, outError))
+                result.push_back(makeAlbumNode(album));
+            break;
+        }
+        }
+    }
+    return result;
+}
+
+std::vector<std::shared_ptr<NavidromeNode>> BrowserWindow::buildGroupedRoots() const {
+    const auto defaults = navidrome::groupedNavigationDefaults();
+    auto smartGroup = std::make_shared<NavidromeNode>();
+    smartGroup->type = NavidromeNode::NavigationGroup;
+    smartGroup->navigationGroup = navidrome::NavigationGroupKind::SmartLists;
+    smartGroup->displayName = navidrome::l10n::smartLists;
+    smartGroup->childrenLoaded = true;
+
+    const auto addSmart = [&](navidrome::SmartListKind kind, const char* label) {
+        auto node = std::make_shared<NavidromeNode>();
+        node->type = NavidromeNode::SmartList;
+        node->smartList = kind;
+        node->displayName = label;
+        smartGroup->children.push_back(std::move(node));
+    };
+    for (const auto kind : defaults.smartLists) {
+        const char* label = navidrome::l10n::starredSongs;
+        switch (kind) {
+        case navidrome::SmartListKind::StarredSongs:
+            label = navidrome::l10n::starredSongs;
+            break;
+        case navidrome::SmartListKind::StarredAlbums:
+            label = navidrome::l10n::starredAlbums;
+            break;
+        case navidrome::SmartListKind::StarredArtists:
+            label = navidrome::l10n::starredArtists;
+            break;
+        case navidrome::SmartListKind::NewestAlbums:
+            label = navidrome::l10n::newestAlbums;
+            break;
+        case navidrome::SmartListKind::FrequentAlbums:
+            label = navidrome::l10n::frequentAlbums;
+            break;
+        case navidrome::SmartListKind::RecentAlbums:
+            label = navidrome::l10n::recentAlbums;
+            break;
+        case navidrome::SmartListKind::RandomAlbums:
+            label = navidrome::l10n::randomAlbums;
+            break;
+        }
+        addSmart(kind, label);
+    }
+
+    auto playlistGroup = std::make_shared<NavidromeNode>();
+    playlistGroup->type = NavidromeNode::NavigationGroup;
+    playlistGroup->navigationGroup = navidrome::NavigationGroupKind::ServerPlaylists;
+    playlistGroup->displayName = navidrome::l10n::serverPlaylists;
+
+    auto artistGroup = std::make_shared<NavidromeNode>();
+    artistGroup->type = NavidromeNode::NavigationGroup;
+    artistGroup->navigationGroup = navidrome::NavigationGroupKind::Artists;
+    artistGroup->displayName = navidrome::l10n::artists;
+    artistGroup->childrenLoaded = true;
+    artistGroup->children = m_libraryRoots;
+
+    std::vector<std::shared_ptr<NavidromeNode>> roots;
+    roots.reserve(defaults.groups.size());
+    for (const auto group : defaults.groups) {
+        if (group == navidrome::NavigationGroupKind::SmartLists)
+            roots.push_back(smartGroup);
+        else if (group == navidrome::NavigationGroupKind::ServerPlaylists)
+            roots.push_back(playlistGroup);
+        else
+            roots.push_back(artistGroup);
+    }
+    return roots;
+}
+
+void BrowserWindow::displayGroupedNavigation() {
+    displayRootNodes(buildGroupedRoots());
+    for (const auto& root : m_rootNodes) {
+        if (root->navigationGroup == navidrome::NavigationGroupKind::Artists &&
+            root->hItem) {
+            m_tree.Expand(root->hItem, TVE_EXPAND);
+            break;
+        }
+    }
+}
+
 void BrowserWindow::loadArtists() {
     setStatus(navidrome::l10n::loadingArtists);
     m_libraryLoading = true;
     m_libraryRoots.clear();
-    displayRootNodes({});
+    displayGroupedNavigation();
     updateActionState();
 
+    auto context = navidrome::SubsonicClientWin::get().snapshot();
+    bindMutationIdentity(context);
+    // A manual/account refresh makes the server response authoritative again.
+    // Mutations confirmed after this point are cached while the request is in flight
+    // and are re-applied when its nodes arrive.
+    m_confirmedMutations.clear();
+    m_appliedMutationRevisions.clear();
     const std::uint64_t requestId = ++m_libraryRequestId;
     auto dispatch = m_dispatchState;
-    std::thread([dispatch, requestId]() {
+    std::thread([dispatch, requestId, context = std::move(context)]() {
         auto* payload = new LoadedPayload{};
         payload->source = LoadedPayload::Source::Library;
         payload->requestId = requestId;
         std::string err;
-        auto artists = navidrome::SubsonicClientWin::get().getArtists(err);
+        auto artists = navidrome::SubsonicClientWin::get().getArtists(context, err);
         payload->error = err;
-        for (auto& a : artists) {
-            auto n = std::make_shared<NavidromeNode>();
-            n->type        = NavidromeNode::Artist;
-            n->id          = a.id;
-            n->displayName = a.name;
-            n->coverArtId  = a.coverArtId;
-            payload->nodes.push_back(n);
-        }
+        for (const auto& artist : artists)
+            payload->nodes.push_back(BrowserWindow::makeArtistNode(artist));
         dispatchBrowserPayload(dispatch, WM_NAVIDROME_LOADED, payload);
     }).detach();
 }
@@ -274,6 +508,9 @@ LRESULT BrowserWindow::OnNavidromeLoaded(UINT, WPARAM wParam, LPARAM, BOOL&) {
 LRESULT BrowserWindow::OnNavidromeChildren(UINT, WPARAM wParam, LPARAM, BOOL&) {
     std::unique_ptr<LoadedPayload> payload(
         reinterpret_cast<LoadedPayload*>(wParam));
+    if (!payload->parent ||
+        payload->requestId != payload->parent->childRequestId)
+        return 0;
     if (payload->displayGeneration != m_displayGeneration) {
         if (payload->parent) payload->parent->isLoading = false;
         return 0;
@@ -299,16 +536,18 @@ void BrowserWindow::populateRoot(LoadedPayload* payload) {
     }
 
     if (isLibrary) {
+        applyKnownMutations(payload->nodes);
         m_libraryRoots = payload->nodes;
         updateActionState();
         if (m_searchQuery.size() < 2) {
-            displayRootNodes(m_libraryRoots);
+            displayGroupedNavigation();
             if (!m_queueInProgress)
                 setStatus(navidrome::l10n::artistCount(m_libraryRoots.size()));
         }
         return;
     }
 
+    applyKnownMutations(payload->nodes);
     displayRootNodes(payload->nodes);
     if (!m_queueInProgress)
         setStatus(navidrome::l10n::searchResultCount(payload->nodes.size()));
@@ -333,6 +572,7 @@ void BrowserWindow::populateChildren(LoadedPayload* payload) {
 
     parent->isLoading      = false;
     parent->childrenLoaded = true;
+    applyKnownMutations(payload->nodes);
     parent->children       = payload->nodes;
 
     if (!payload->error.empty()) {
@@ -366,6 +606,111 @@ void BrowserWindow::applyDeferredChildren() {
     m_deferredChildren.clear();
 }
 
+void BrowserWindow::applyDeferredMutations() {
+    auto events = std::move(m_deferredMutationEvents);
+    m_deferredMutationEvents.clear();
+    for (const auto& event : events) applyMutationProjection(event);
+}
+
+void BrowserWindow::forgetTreeBranch(HTREEITEM item) {
+    if (!item) return;
+    HTREEITEM child = m_tree.GetChildItem(item);
+    while (child) {
+        const HTREEITEM next = m_tree.GetNextSiblingItem(child);
+        forgetTreeBranch(child);
+        child = next;
+    }
+    const auto visible = m_nodeMap.find(item);
+    if (visible != m_nodeMap.end()) {
+        ++visible->second->childRequestId;
+        visible->second->isLoading = false;
+        visible->second->hItem = nullptr;
+        m_nodeMap.erase(visible);
+    }
+}
+
+void BrowserWindow::clearNodeChildren(
+        const std::shared_ptr<NavidromeNode>& parent) {
+    if (!parent) return;
+    const auto visible = parent->hItem ? m_nodeMap.find(parent->hItem)
+                                       : m_nodeMap.end();
+    if (visible != m_nodeMap.end() && visible->second.get() == parent.get()) {
+        HTREEITEM child = m_tree.GetChildItem(parent->hItem);
+        while (child) {
+            const HTREEITEM next = m_tree.GetNextSiblingItem(child);
+            forgetTreeBranch(child);
+            m_tree.DeleteItem(child);
+            child = next;
+        }
+    }
+    parent->children.clear();
+}
+
+void BrowserWindow::startChildLoad(
+        const std::shared_ptr<NavidromeNode>& node,
+        navidrome::SubsonicRequestContext context, bool replaceExisting) {
+    if (!node) return;
+    if (replaceExisting) clearNodeChildren(node);
+    node->childrenLoaded = false;
+    node->isLoading = true;
+    const std::uint64_t requestId = ++node->childRequestId;
+
+    const auto visible = node->hItem ? m_nodeMap.find(node->hItem) : m_nodeMap.end();
+    if (visible != m_nodeMap.end() && visible->second.get() == node.get()) {
+        auto loadNode = std::make_shared<NavidromeNode>();
+        loadNode->type = NavidromeNode::Loading;
+        loadNode->displayName = navidrome::l10n::loading;
+        insertNode(node->hItem, std::move(loadNode));
+    }
+
+    const std::uint64_t displayGeneration = m_displayGeneration;
+    auto dispatch = m_dispatchState;
+    std::thread([dispatch, node, requestId, displayGeneration,
+                 context = std::move(context)]() {
+        auto* payload = new LoadedPayload{};
+        payload->parent = node;
+        payload->requestId = requestId;
+        payload->displayGeneration = displayGeneration;
+        std::string error;
+        payload->nodes = BrowserWindow::fetchChildren(node, context, error);
+        payload->error = std::move(error);
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_CHILDREN, payload);
+    }).detach();
+}
+
+void BrowserWindow::refreshFavoriteSmartList(navidrome::FavoriteKind kind) {
+    const auto target = navidrome::favoriteSmartListKind(kind);
+    for (const auto& root : m_rootNodes) {
+        for (const auto& node : root->children) {
+            if (node->type != NavidromeNode::SmartList ||
+                node->smartList != target ||
+                (!node->childrenLoaded && !node->isLoading))
+                continue;
+            auto context = navidrome::SubsonicClientWin::get().snapshot();
+            if (navidrome::serverAccountIdentity(
+                    context.serverUrl, context.username) != m_mutationIdentity)
+                return;
+            startChildLoad(node, std::move(context), true);
+            return;
+        }
+    }
+}
+
+void BrowserWindow::refreshServerPlaylistCatalog() {
+    for (const auto& node : m_rootNodes) {
+        if (node->type != NavidromeNode::NavigationGroup ||
+            node->navigationGroup != navidrome::NavigationGroupKind::ServerPlaylists ||
+            (!node->childrenLoaded && !node->isLoading))
+            continue;
+        auto context = navidrome::SubsonicClientWin::get().snapshot();
+        if (navidrome::serverAccountIdentity(
+                context.serverUrl, context.username) != m_mutationIdentity)
+            return;
+        startChildLoad(node, std::move(context), true);
+        return;
+    }
+}
+
 void BrowserWindow::removeLoadingChildren(
         const std::shared_ptr<NavidromeNode>& parent) {
     if (!parent || !parent->hItem) return;
@@ -383,9 +728,7 @@ void BrowserWindow::removeLoadingChildren(
 
 HTREEITEM BrowserWindow::insertNode(HTREEITEM hParent,
                                     std::shared_ptr<NavidromeNode> node) {
-    std::string label = node->displayName;
-    if (node->type == NavidromeNode::Song && node->track > 0)
-        label = std::to_string(node->track) + ". " + label;
+    const std::string label = nodeLabel(node);
 
     TVINSERTSTRUCT tvi    = {};
     tvi.hParent           = hParent;
@@ -394,9 +737,7 @@ HTREEITEM BrowserWindow::insertNode(HTREEITEM hParent,
     auto wlabel           = u8ToWide(label);
     tvi.item.pszText      = const_cast<LPWSTR>(wlabel.c_str());
     tvi.item.lParam       = reinterpret_cast<LPARAM>(node.get());
-    // Show expand arrow for unloaded artists/albums or cached nodes with children.
-    const bool container = node->type == NavidromeNode::Artist ||
-                           node->type == NavidromeNode::Album;
+    const bool container = navidrome::isBrowserContainer(node->type);
     tvi.item.cChildren = container &&
         (!node->childrenLoaded || !node->children.empty()) ? 1 : 0;
 
@@ -425,72 +766,27 @@ std::shared_ptr<NavidromeNode> BrowserWindow::nodeForItem(HTREEITEM hItem) {
 // Tree events
 // ---------------------------------------------------------------------------
 LRESULT BrowserWindow::OnTreeExpanding(LPNMHDR pnmh) {
-    if (m_queueInProgress) return TRUE;
+    if (isBusy()) return TRUE;
     auto* pnm = reinterpret_cast<LPNMTREEVIEW>(pnmh);
     if (pnm->action != TVE_EXPAND) return 0;
 
     auto node = nodeForItem(pnm->itemNew.hItem);
     if (!node || node->childrenLoaded || node->isLoading) return 0;
-    node->isLoading = true;
-
-    // Insert placeholder
-    auto loadNode = std::make_shared<NavidromeNode>();
-    loadNode->type        = NavidromeNode::Loading;
-    loadNode->displayName = navidrome::l10n::loading;
-    insertNode(node->hItem, loadNode);
-
-    const std::uint64_t displayGeneration = m_displayGeneration;
-    auto dispatch = m_dispatchState;
-    std::thread([dispatch, node, displayGeneration]() {
-        auto* payload  = new LoadedPayload{};
-        payload->parent = node;
-        payload->displayGeneration = displayGeneration;
-        std::string err;
-
-        if (node->type == NavidromeNode::Artist) {
-            for (auto& a : navidrome::SubsonicClientWin::get()
-                               .getAlbumsForArtist(node->id, err)) {
-                auto n = std::make_shared<NavidromeNode>();
-                n->type        = NavidromeNode::Album;
-                n->id          = a.id;
-                n->displayName = a.name;
-                n->subtitle    = a.artist;
-                n->coverArtId  = a.coverArtId;
-                payload->nodes.push_back(n);
-            }
-        } else if (node->type == NavidromeNode::Album) {
-            for (auto& s : navidrome::SubsonicClientWin::get()
-                               .getSongsForAlbum(node->id, err)) {
-                auto n = std::make_shared<NavidromeNode>();
-                n->type           = NavidromeNode::Song;
-                n->id             = s.id;
-                n->displayName    = s.title;
-                n->subtitle       = s.artist;
-                n->album          = s.album;
-                n->coverArtId     = s.coverArtId;
-                n->suffix         = s.suffix;
-                n->track          = s.track;
-                n->year           = s.year;
-                n->duration       = s.duration;
-                n->metadata       = s;
-                n->childrenLoaded = true;
-                payload->nodes.push_back(n);
-            }
-        }
-        payload->error = err;
-        dispatchBrowserPayload(dispatch, WM_NAVIDROME_CHILDREN, payload);
-    }).detach();
+    auto context = navidrome::SubsonicClientWin::get().snapshot();
+    if (!ensureCurrentAccount(context)) return TRUE;
+    startChildLoad(node, std::move(context), false);
 
     return 0;
 }
 
 LRESULT BrowserWindow::OnTreeDblClick(LPNMHDR) {
-    if (m_queueInProgress) return 0;
+    if (isBusy()) return 0;
     HTREEITEM hSel = m_tree.GetSelectedItem();
     if (!hSel) return 0;
     auto node = nodeForItem(hSel);
     if (!node) return 0;
-    if (node->type == NavidromeNode::Song)
+    if (navidrome::isBrowserPlayable(node->type) &&
+        !navidrome::isBrowserContainer(node->type))
         queueNodes({ node }, true, false, false);
     else if (m_tree.GetItemState(hSel, TVIS_EXPANDED) & TVIS_EXPANDED)
         m_tree.Expand(hSel, TVE_COLLAPSE);
@@ -510,7 +806,7 @@ std::vector<std::shared_ptr<NavidromeNode>> BrowserWindow::selectedNodes() {
     while (hItem) {
         if (m_tree.GetItemState(hItem, TVIS_SELECTED) & TVIS_SELECTED) {
             auto n = nodeForItem(hItem);
-            if (n && n->type != NavidromeNode::Loading && n->type != NavidromeNode::Error)
+            if (n && navidrome::isBrowserPlayable(n->type))
                 selected.push_back(n);
         }
         hItem = m_tree.GetNextVisibleItem(hItem);
@@ -529,7 +825,7 @@ void BrowserWindow::queueSelected(bool play, bool closeAfter) {
 void BrowserWindow::queueNodes(
         std::vector<std::shared_ptr<NavidromeNode>> roots,
         bool play, bool closeAfter, bool reportRootProgress) {
-    if (m_queueInProgress) {
+    if (isBusy()) {
         setStatus(navidrome::l10n::queueBusy);
         return;
     }
@@ -538,6 +834,8 @@ void BrowserWindow::queueNodes(
         return;
     }
 
+    auto context = navidrome::SubsonicClientWin::get().snapshot();
+    if (!ensureCurrentAccount(context)) return;
     m_queueInProgress = true;
     const std::uint64_t operationId = ++m_queueOperationId;
     m_queueCancel = std::make_shared<std::atomic_bool>(false);
@@ -551,6 +849,7 @@ void BrowserWindow::queueNodes(
         : navidrome::l10n::loadingTracks);
 
     std::thread([dispatch, cancel, operationId, roots = std::move(roots),
+                 context = std::move(context),
                  totalRoots, play, closeAfter, reportRootProgress]() mutable {
         std::vector<std::shared_ptr<NavidromeNode>> songs;
         std::size_t failedItems = 0;
@@ -558,7 +857,8 @@ void BrowserWindow::queueNodes(
 
         for (auto& root : roots) {
             if (cancellationRequested(cancel)) break;
-            BrowserWindow::collectSongsDeep(root, songs, failedItems, cancel);
+            BrowserWindow::collectSongsDeep(
+                root, songs, failedItems, cancel, context);
             if (cancellationRequested(cancel)) break;
             ++completedRoots;
 
@@ -593,11 +893,12 @@ void BrowserWindow::OnReconcile(UINT, int, HWND) { importLibrary(true); }
 void BrowserWindow::OnPlay(UINT, int, HWND) { queueSelected(true,  false); }
 
 void BrowserWindow::importLibrary(bool forceFull) {
-    if (m_queueInProgress) {
+    if (isBusy()) {
         setStatus(navidrome::l10n::queueBusy);
         return;
     }
     auto context = navidrome::SubsonicClientWin::get().snapshot();
+    if (!ensureCurrentAccount(context)) return;
     if (context.serverUrl.empty() || context.username.empty() || context.password.empty()) {
         setStatus(navidrome::l10n::libraryNotLoaded);
         return;
@@ -646,6 +947,8 @@ LRESULT BrowserWindow::OnLibraryComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
     if (!m_queueInProgress || payload->operationId != m_queueOperationId) return 0;
     m_queueInProgress = false;
     m_queueCancel.reset();
+    applyDeferredChildren();
+    applyDeferredMutations();
     updateActionState();
     auto& result = payload->result;
     if (result.cancelled) return 0;
@@ -658,20 +961,7 @@ LRESULT BrowserWindow::OnLibraryComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
     std::vector<std::shared_ptr<NavidromeNode>> nodes;
     nodes.reserve(result.candidates.size());
     for (const auto& song : result.candidates) {
-        auto node = std::make_shared<NavidromeNode>();
-        node->type = NavidromeNode::Song;
-        node->id = song.id;
-        node->displayName = song.title;
-        node->subtitle = song.artist;
-        node->album = song.album;
-        node->coverArtId = song.coverArtId;
-        node->suffix = song.suffix;
-        node->track = song.track;
-        node->year = song.year;
-        node->duration = song.duration;
-        node->metadata = song;
-        node->childrenLoaded = true;
-        nodes.push_back(std::move(node));
+        nodes.push_back(makeSongNode(song));
     }
     PlaylistAppendReceipt receipt;
     if (!nodes.empty()) {
@@ -717,9 +1007,10 @@ LRESULT BrowserWindow::OnQueueComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
     if (!m_queueInProgress || payload->operationId != m_queueOperationId)
         return 0;
 
-    applyDeferredChildren();
     m_queueInProgress = false;
     m_queueCancel.reset();
+    applyDeferredChildren();
+    applyDeferredMutations();
     updateActionState();
     if (payload->cancelled) return 0;
 
@@ -750,17 +1041,208 @@ LRESULT BrowserWindow::OnQueueComplete(UINT, WPARAM wParam, LPARAM, BOOL&) {
 // the first track, and close the window. A quick "queue this artist, play it,
 // and get out of my way" shortcut.
 LRESULT BrowserWindow::OnTreeReturn(LPNMHDR) {
-    if (m_queueInProgress) return 0;
+    if (isBusy()) return 0;
     queueSelected(true, true);
     return 0;
 }
 
-// Right-click context menu on the tree — mirrors the Add/Play buttons for a
-// native feel. The menu item IDs are IDC_PLAY / IDC_ADD, so TrackPopupMenu
-// posts WM_COMMAND straight into the existing OnPlay / OnAdd handlers.
+std::string BrowserWindow::nodeLabel(
+        const std::shared_ptr<NavidromeNode>& node) const {
+    if (!node) return {};
+    if (node->type == NavidromeNode::Song) {
+        auto metadata = node->metadata;
+        if (metadata.title.empty()) metadata.title = node->displayName;
+        if (metadata.track == 0) metadata.track = node->track;
+        return navidrome::formatSongLabel(metadata, node->displayName);
+    }
+    if (node->type == NavidromeNode::ServerPlaylist)
+        return navidrome::formatPlaylistLabel(node->playlist);
+    if ((node->type == NavidromeNode::Artist ||
+         node->type == NavidromeNode::Album) && node->starred)
+        return u8"★ " + node->displayName;
+    return node->displayName;
+}
+
+void BrowserWindow::refreshNodeLabel(
+        const std::shared_ptr<NavidromeNode>& node) {
+    if (!node || !node->hItem) return;
+    const auto visible = m_nodeMap.find(node->hItem);
+    if (visible == m_nodeMap.end() || visible->second.get() != node.get())
+        return;
+    const auto label = u8ToWide(nodeLabel(node));
+    m_tree.SetItemText(node->hItem, label.c_str());
+}
+
+void BrowserWindow::bindMutationIdentity(
+        const navidrome::SubsonicRequestContext& context) {
+    const auto identity = navidrome::serverAccountIdentity(
+        context.serverUrl, context.username);
+    if (identity == m_mutationIdentity) return;
+    m_mutationIdentity = identity;
+    m_confirmedMutations.clear();
+    m_appliedMutationRevisions.clear();
+}
+
+bool BrowserWindow::ensureCurrentAccount(
+        const navidrome::SubsonicRequestContext& context) {
+    const auto identity = navidrome::serverAccountIdentity(
+        context.serverUrl, context.username);
+    if (m_mutationIdentity.empty()) {
+        bindMutationIdentity(context);
+        return true;
+    }
+    if (identity == m_mutationIdentity) return true;
+    PostMessage(WM_COMMAND, MAKEWPARAM(IDC_REFRESH, BN_CLICKED), 0);
+    setStatus(navidrome::l10n::accountChangedRefreshing);
+    return false;
+}
+
+void BrowserWindow::applyMutationToNode(
+        const navidrome::BrowserMutationEvent& event,
+        const std::shared_ptr<NavidromeNode>& node) {
+    const auto kind = favoriteKindForNode(node);
+    if (!kind || *kind != event.entityKind || node->id != event.entityId) return;
+    if (event.kind == navidrome::BrowserMutationKind::FavoriteChanged) {
+        const std::optional<std::string> value = event.favorite
+            ? std::optional<std::string>("1") : std::nullopt;
+        if (node->type == NavidromeNode::Song) node->metadata.starred = value;
+        else node->starred = value;
+    } else if (event.kind == navidrome::BrowserMutationKind::RatingChanged &&
+               node->type == NavidromeNode::Song) {
+        node->metadata.userRating = event.rating > 0
+            ? std::optional<int>(event.rating) : std::nullopt;
+    }
+    refreshNodeLabel(node);
+}
+
+void BrowserWindow::applyKnownMutations(
+        const std::vector<std::shared_ptr<NavidromeNode>>& nodes) {
+    for (const auto& node : nodes) {
+        if (const auto kind = favoriteKindForNode(node)) {
+            const auto favoriteIt = m_confirmedMutations.find(mutationKey(
+                navidrome::BrowserMutationKind::FavoriteChanged, *kind, node->id));
+            if (favoriteIt != m_confirmedMutations.end())
+                applyMutationToNode(favoriteIt->second, node);
+            if (*kind == navidrome::FavoriteKind::Song) {
+                const auto ratingIt = m_confirmedMutations.find(mutationKey(
+                    navidrome::BrowserMutationKind::RatingChanged, *kind, node->id));
+                if (ratingIt != m_confirmedMutations.end())
+                    applyMutationToNode(ratingIt->second, node);
+            }
+        }
+        applyKnownMutations(node->children);
+    }
+}
+
+void BrowserWindow::applyMutationEvent(
+        const navidrome::BrowserMutationEvent& event) {
+    if (event.identity != m_mutationIdentity) return;
+    if (event.kind == navidrome::BrowserMutationKind::PlaylistCatalogChanged) {
+        const std::string key = "playlist-catalog";
+        if (event.revision <= m_appliedMutationRevisions[key]) return;
+        m_appliedMutationRevisions[key] = event.revision;
+    } else {
+        const auto key = mutationKey(event.kind, event.entityKind, event.entityId);
+        if (!navidrome::shouldApplyBrowserMutation(
+                event, m_mutationIdentity, m_appliedMutationRevisions[key])) return;
+        m_appliedMutationRevisions[key] = event.revision;
+        m_confirmedMutations[key] = event;
+    }
+
+    if (m_queueInProgress) {
+        m_deferredMutationEvents.push_back(event);
+        return;
+    }
+    applyMutationProjection(event);
+}
+
+void BrowserWindow::applyMutationProjection(
+        const navidrome::BrowserMutationEvent& event) {
+    if (event.identity != m_mutationIdentity) return;
+    if (event.kind == navidrome::BrowserMutationKind::PlaylistCatalogChanged) {
+        refreshServerPlaylistCatalog();
+        return;
+    }
+
+    std::set<NavidromeNode*> visited;
+    const auto applyTree = [&](const auto& self,
+                               const std::shared_ptr<NavidromeNode>& node) -> void {
+        if (!node || !visited.insert(node.get()).second) return;
+        applyMutationToNode(event, node);
+        for (const auto& child : node->children) self(self, child);
+    };
+    for (const auto& root : m_libraryRoots) applyTree(applyTree, root);
+    for (const auto& root : m_rootNodes) applyTree(applyTree, root);
+    if (event.kind == navidrome::BrowserMutationKind::FavoriteChanged)
+        refreshFavoriteSmartList(event.entityKind);
+}
+
+void BrowserWindow::startMutation(
+        const std::shared_ptr<NavidromeNode>& node,
+        navidrome::BrowserMutationKind kind, bool favorite, int rating) {
+    const auto entityKind = favoriteKindForNode(node);
+    if (!entityKind || isBusy()) return;
+    auto context = navidrome::SubsonicClientWin::get().snapshot();
+    if (!ensureCurrentAccount(context)) return;
+    const auto identity = m_mutationIdentity;
+    const auto operationId = ++m_mutationOperationId;
+    m_mutationInProgress = true;
+    updateActionState();
+    setStatus(kind == navidrome::BrowserMutationKind::FavoriteChanged
+        ? navidrome::l10n::updatingFavorite : navidrome::l10n::updatingRating);
+    auto dispatch = m_dispatchState;
+    const auto entityId = node->id;
+    std::thread([dispatch, context = std::move(context), identity,
+                 operationId, kind, entityKind = *entityKind, entityId,
+                 favorite, rating]() {
+        auto* payload = new MutationCompletePayload{};
+        payload->operationId = operationId;
+        payload->identity = identity;
+        payload->kind = kind;
+        payload->entityKind = entityKind;
+        payload->entityId = entityId;
+        payload->favorite = favorite;
+        payload->rating = rating;
+        if (kind == navidrome::BrowserMutationKind::FavoriteChanged) {
+            payload->success = navidrome::SubsonicClientWin::get().setFavorite(
+                context, entityKind, entityId, favorite, payload->error);
+        } else {
+            payload->success = navidrome::SubsonicClientWin::get().setRating(
+                context, entityId, rating, payload->error);
+        }
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_MUTATION_COMPLETE, payload);
+    }).detach();
+}
+
+LRESULT BrowserWindow::OnMutationComplete(
+        UINT, WPARAM wParam, LPARAM, BOOL&) {
+    std::unique_ptr<MutationCompletePayload> payload(
+        reinterpret_cast<MutationCompletePayload*>(wParam));
+    if (!m_mutationInProgress || payload->operationId != m_mutationOperationId)
+        return 0;
+    m_mutationInProgress = false;
+    updateActionState();
+    if (payload->identity != m_mutationIdentity) return 0;
+    if (!payload->success) {
+        setStatus(navidrome::l10n::error(payload->error));
+        return 0;
+    }
+    navidrome::BrowserMutationEvent event;
+    event.identity = payload->identity;
+    event.kind = payload->kind;
+    event.entityKind = payload->entityKind;
+    event.entityId = payload->entityId;
+    event.favorite = payload->favorite;
+    event.rating = payload->rating;
+    navidrome::BrowserMutationHub::get().publish(std::move(event));
+    setStatus(payload->kind == navidrome::BrowserMutationKind::FavoriteChanged
+        ? navidrome::l10n::favoriteUpdated : navidrome::l10n::ratingUpdated);
+    return 0;
+}
+
 void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
     if (wnd.m_hWnd != m_tree.m_hWnd) { SetMsgHandled(FALSE); return; }
-    if (m_queueInProgress) return;
+    if (isBusy()) return;
 
     if (point.x == -1 && point.y == -1) {
         // Keyboard-invoked (Shift+F10 / menu key): anchor on the selected item.
@@ -778,17 +1260,371 @@ void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
         if (hit) m_tree.SelectItem(hit);
     }
 
-    if (selectedNodes().empty()) return;
+    auto node = nodeForItem(m_tree.GetSelectedItem());
+    if (!node) return;
 
     CMenu menu;
     menu.CreatePopupMenu();
-    menu.AppendMenu(MF_STRING, IDC_PLAY, navidrome::l10n::playNow);
-    menu.AppendMenu(MF_STRING, IDC_ADD, navidrome::l10n::addToPlaylist);
+    if (navidrome::isBrowserPlayable(node->type)) {
+        menu.AppendMenu(MF_STRING, IDC_PLAY, navidrome::l10n::playNow);
+        menu.AppendMenu(MF_STRING, IDC_ADD, navidrome::l10n::addToPlaylist);
+    }
+    if (favoriteKindForNode(node)) {
+        menu.AppendMenu(MF_SEPARATOR);
+        const bool starred = node->type == NavidromeNode::Song
+            ? node->metadata.starred.has_value() : node->starred.has_value();
+        menu.AppendMenu(MF_STRING | (starred ? MF_CHECKED : MF_UNCHECKED),
+                        IDC_FAVORITE, navidrome::l10n::favorite);
+    }
+    if (node->type == NavidromeNode::Song) {
+        CMenu rating;
+        rating.CreatePopupMenu();
+        rating.AppendMenu(MF_STRING, IDC_RATE_0, navidrome::l10n::clearRating);
+        for (int value = 1; value <= 5; ++value) {
+            const auto label = std::to_wstring(value) + L" / 5";
+            rating.AppendMenu(MF_STRING, IDC_RATE_0 + value, label.c_str());
+        }
+        const int current = node->metadata.userRating.value_or(0);
+        rating.CheckMenuRadioItem(IDC_RATE_0, IDC_RATE_5,
+                                  IDC_RATE_0 + current, MF_BYCOMMAND);
+        menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(rating.m_hMenu),
+                        navidrome::l10n::rating);
+        rating.Detach();
+    }
+    if (node->type == NavidromeNode::NavigationGroup &&
+        node->navigationGroup == navidrome::NavigationGroupKind::ServerPlaylists) {
+        if (menu.GetMenuItemCount() > 0) menu.AppendMenu(MF_SEPARATOR);
+        menu.AppendMenu(MF_STRING, IDC_UPLOAD_PLAYLIST,
+                        navidrome::l10n::uploadActivePlaylist);
+    }
+    if (menu.GetMenuItemCount() == 0) return;
     menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, *this);
 }
 
+void BrowserWindow::OnFavorite(UINT, int, HWND) {
+    auto node = nodeForItem(m_tree.GetSelectedItem());
+    if (!favoriteKindForNode(node)) {
+        setStatus(navidrome::l10n::selectFavoriteTarget);
+        return;
+    }
+    const bool starred = node->type == NavidromeNode::Song
+        ? node->metadata.starred.has_value() : node->starred.has_value();
+    startMutation(node, navidrome::BrowserMutationKind::FavoriteChanged,
+                  !starred, 0);
+}
+
+void BrowserWindow::OnRate(UINT, int commandId, HWND) {
+    auto node = nodeForItem(m_tree.GetSelectedItem());
+    if (!node || node->type != NavidromeNode::Song) {
+        setStatus(navidrome::l10n::selectRatingTarget);
+        return;
+    }
+    const int rating = commandId - IDC_RATE_0;
+    if (rating < 0 || rating > 5) return;
+    startMutation(node, navidrome::BrowserMutationKind::RatingChanged,
+                  false, rating);
+}
+
+void BrowserWindow::OnUploadActivePlaylist(UINT, int, HWND) {
+    if (isBusy()) return;
+    auto manager = playlist_manager::get();
+    const t_size active = manager->get_active_playlist();
+    if (active == pfc_infinite) {
+        setStatus(navidrome::l10n::noActivePlaylist);
+        return;
+    }
+
+    pfc::string8 name;
+    manager->playlist_get_name(active, name);
+    metadb_handle_list items;
+    manager->playlist_get_all_items(active, items);
+    std::vector<std::string> paths;
+    paths.reserve(static_cast<std::size_t>(items.get_count()));
+    for (t_size index = 0; index < items.get_count(); ++index)
+        paths.emplace_back(items[index]->get_path());
+    const auto mapping = navidrome::mapActivePlaylistUris(paths);
+    if (mapping.orderedSongIds.empty()) {
+        setStatus(navidrome::l10n::noNavidromeTracks);
+        return;
+    }
+
+    auto context = navidrome::SubsonicClientWin::get().snapshot();
+    if (!ensureCurrentAccount(context)) return;
+    const auto operationId = ++m_playlistOperationId;
+    m_playlistInProgress = true;
+    updateActionState();
+    setStatus(navidrome::l10n::loadingServerPlaylists);
+    auto dispatch = m_dispatchState;
+    const std::string playlistName = name.is_empty() ? "foobar2000" : name.c_str();
+    const auto sourceItemCount = static_cast<std::size_t>(items.get_count());
+    const auto identity = m_mutationIdentity;
+    std::thread([dispatch, operationId, context = std::move(context), identity,
+                 playlistName, mapping, sourceItemCount]() mutable {
+        auto* payload = new PlaylistCatalogPayload{};
+        payload->operationId = operationId;
+        payload->context = context;
+        payload->identity = identity;
+        payload->activePlaylistName = playlistName;
+        payload->mapping = mapping;
+        payload->sourceItemCount = sourceItemCount;
+        payload->catalog = navidrome::SubsonicClientWin::get().getPlaylists(
+            context, payload->error);
+        if (payload->error.empty()) {
+            std::string capabilityError;
+            payload->capabilities = navidrome::SubsonicClientWin::get()
+                .getOpenSubsonicCapabilities(context, capabilityError);
+        }
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_PLAYLIST_CATALOG, payload);
+    }).detach();
+}
+
+LRESULT BrowserWindow::OnPlaylistCatalog(
+        UINT, WPARAM wParam, LPARAM, BOOL&) {
+    std::unique_ptr<PlaylistCatalogPayload> payload(
+        reinterpret_cast<PlaylistCatalogPayload*>(wParam));
+    if (!m_playlistInProgress || payload->operationId != m_playlistOperationId)
+        return 0;
+    if (payload->identity != m_mutationIdentity) {
+        m_playlistInProgress = false;
+        updateActionState();
+        return 0;
+    }
+    if (!payload->error.empty()) {
+        m_playlistInProgress = false;
+        updateActionState();
+        setStatus(navidrome::l10n::error(payload->error));
+        return 0;
+    }
+
+    const auto matches = navidrome::exactNameMatches(
+        payload->catalog, payload->activePlaylistName);
+    const auto content = u8ToWide(navidrome::l10n::uploadConfirmation(
+        payload->activePlaylistName,
+        navidrome::normalizeServerUrl(payload->context.serverUrl),
+        payload->context.username, payload->mapping.orderedSongIds.size(),
+        payload->mapping.skippedCount()));
+    const auto title = navidrome::l10n::uploadDialogTitle;
+    const std::wstring mainInstruction = matches.empty()
+        ? navidrome::l10n::uploadCreateInstruction
+        : navidrome::l10n::uploadCollisionInstruction;
+
+    constexpr int kCreateButton = 2101;
+    constexpr int kReplaceButton = 2102;
+    constexpr int kCopyButton = 2103;
+    constexpr int kFirstPlaylistRadio = 2200;
+    std::vector<std::wstring> radioLabels;
+    std::vector<TASKDIALOG_BUTTON> radioButtons;
+    radioLabels.reserve(matches.size());
+    radioButtons.reserve(matches.size());
+    for (std::size_t index = 0; index < matches.size(); ++index) {
+        std::wstring label = u8ToWide(matches[index].name);
+        if (!matches[index].owner.empty())
+            label += L" — " + u8ToWide(matches[index].owner);
+        label += navidrome::l10n::playlistChoiceSongCount(matches[index].songCount);
+        radioLabels.push_back(std::move(label));
+    }
+    for (std::size_t index = 0; index < radioLabels.size(); ++index)
+        radioButtons.push_back({kFirstPlaylistRadio + static_cast<int>(index),
+                                radioLabels[index].c_str()});
+
+    TASKDIALOG_BUTTON actionButtons[2] = {};
+    UINT actionCount = 0;
+    if (matches.empty()) {
+        actionButtons[0] = {kCreateButton, navidrome::l10n::uploadCreate};
+        actionCount = 1;
+    } else {
+        actionButtons[0] = {kReplaceButton, navidrome::l10n::uploadReplace};
+        actionButtons[1] = {kCopyButton, navidrome::l10n::uploadNumberedCopy};
+        actionCount = 2;
+    }
+
+    TASKDIALOGCONFIG config = {};
+    config.cbSize = sizeof(config);
+    config.hwndParent = *this;
+    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION |
+                     TDF_POSITION_RELATIVE_TO_WINDOW;
+    config.pszWindowTitle = title;
+    config.pszMainInstruction = mainInstruction.c_str();
+    config.pszContent = content.c_str();
+    config.cButtons = actionCount;
+    config.pButtons = actionButtons;
+    config.nDefaultButton = matches.empty() ? kCreateButton : kCopyButton;
+    config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    config.cRadioButtons = static_cast<UINT>(radioButtons.size());
+    config.pRadioButtons = radioButtons.empty() ? nullptr : radioButtons.data();
+    config.nDefaultRadioButton = matches.empty() ? 0 : kFirstPlaylistRadio;
+
+    int pressed = IDCANCEL;
+    int selectedRadio = matches.empty() ? 0 : kFirstPlaylistRadio;
+    const HRESULT dialogResult = TaskDialogIndirect(
+        &config, &pressed, &selectedRadio, nullptr);
+
+    navidrome::UploadChoice choice = navidrome::UploadChoice::Cancel;
+    std::optional<std::string> selectedId;
+    if (SUCCEEDED(dialogResult)) {
+        if (pressed == kCreateButton) choice = navidrome::UploadChoice::Create;
+        else if (pressed == kCopyButton) choice = navidrome::UploadChoice::NumberedCopy;
+        else if (pressed == kReplaceButton) {
+            choice = navidrome::UploadChoice::Replace;
+            const int matchIndex = selectedRadio - kFirstPlaylistRadio;
+            if (matchIndex >= 0 && static_cast<std::size_t>(matchIndex) < matches.size())
+                selectedId = matches[static_cast<std::size_t>(matchIndex)].id;
+        }
+    }
+
+    auto plan = navidrome::makeUploadPlan(
+        payload->activePlaylistName, payload->mapping, choice, selectedId,
+        payload->catalog, payload->sourceItemCount);
+    if (plan.status != navidrome::UploadPlanStatus::Ready) {
+        m_playlistInProgress = false;
+        updateActionState();
+        setStatus(plan.status == navidrome::UploadPlanStatus::Cancelled
+            ? navidrome::l10n::playlistUploadCancelled
+            : navidrome::l10n::error(navidrome::l10n::invalidPlaylistUploadChoice));
+        return 0;
+    }
+
+    setStatus(navidrome::l10n::uploadingPlaylist);
+    auto dispatch = m_dispatchState;
+    const auto operationId = payload->operationId;
+    const auto identity = payload->identity;
+    const bool formPost = payload->capabilities.formPost;
+    auto context = std::move(payload->context);
+    std::thread([dispatch, operationId, identity, plan = std::move(plan),
+                 formPost, context = std::move(context)]() mutable {
+        auto* complete = new PlaylistCompletePayload{};
+        complete->operationId = operationId;
+        complete->identity = identity;
+        complete->plan = plan;
+
+        navidrome::WriteEvidence evidence;
+        evidence.requestedIds = plan.orderedSongIds;
+        navidrome::ServerPlaylistDetails original;
+        if (plan.targetPlaylistId) {
+            std::string originalError;
+            original = navidrome::SubsonicClientWin::get().getPlaylist(
+                context, *plan.targetPlaylistId, originalError);
+            if (!originalError.empty() || original.playlist.id.empty()) {
+                complete->outcome = navidrome::BrowserWriteOutcome::FailedNoChange;
+                complete->error = originalError.empty()
+                    ? navidrome::l10n::existingPlaylistSnapshotFailed
+                    : originalError;
+                dispatchBrowserPayload(dispatch, WM_NAVIDROME_PLAYLIST_COMPLETE,
+                                       complete);
+                return;
+            }
+            evidence.originalIds = playlistSongIds(original);
+        }
+
+        evidence.mutationAttempted = true;
+        std::string writeError;
+        const auto write = navidrome::SubsonicClientWin::get().createOrReplacePlaylist(
+            context, plan.targetPlaylistId, plan.targetName,
+            plan.orderedSongIds, formPost, writeError);
+        evidence.transportState = write.state;
+        complete->error = !writeError.empty() ? writeError : write.error;
+
+        std::string targetId = write.playlist.id;
+        if (targetId.empty() && plan.targetPlaylistId) targetId = *plan.targetPlaylistId;
+        if (targetId.empty()) {
+            std::string catalogError;
+            const auto catalog = navidrome::SubsonicClientWin::get().getPlaylists(
+                context, catalogError);
+            const auto createdMatches = navidrome::exactNameMatches(
+                catalog, plan.targetName);
+            if (catalogError.empty() && createdMatches.size() == 1)
+                targetId = createdMatches.front().id;
+            else if (complete->error.empty())
+                complete->error = catalogError.empty()
+                    ? navidrome::l10n::ambiguousCreatedPlaylist
+                    : catalogError;
+        }
+
+        if (!targetId.empty()) {
+            std::string verifyError;
+            const auto verified = navidrome::SubsonicClientWin::get().getPlaylist(
+                context, targetId, verifyError);
+            if (verifyError.empty() && !verified.playlist.id.empty())
+                evidence.verifiedCurrentIds = playlistSongIds(verified);
+            else if (complete->error.empty())
+                complete->error = verifyError.empty()
+                    ? navidrome::l10n::playlistVerificationFailed : verifyError;
+        }
+
+        const bool verifiedRequested = evidence.verifiedCurrentIds &&
+            *evidence.verifiedCurrentIds == evidence.requestedIds;
+        const bool verifiedOriginal = evidence.originalIds &&
+            evidence.verifiedCurrentIds &&
+            *evidence.verifiedCurrentIds == *evidence.originalIds;
+        if (evidence.originalIds && !verifiedRequested && !verifiedOriginal) {
+            evidence.restorationAttempted = true;
+            std::string restoreError;
+            navidrome::SubsonicClientWin::get().createOrReplacePlaylist(
+                context, plan.targetPlaylistId, plan.targetName,
+                *evidence.originalIds, formPost, restoreError);
+            if (plan.targetPlaylistId) {
+                std::string verifyRestoreError;
+                const auto restored = navidrome::SubsonicClientWin::get().getPlaylist(
+                    context, *plan.targetPlaylistId, verifyRestoreError);
+                if (verifyRestoreError.empty() && !restored.playlist.id.empty())
+                    evidence.verifiedRestoredIds = playlistSongIds(restored);
+                else if (complete->error.empty())
+                    complete->error = verifyRestoreError.empty()
+                        ? navidrome::l10n::playlistVerificationFailed
+                        : verifyRestoreError;
+            }
+            if (!restoreError.empty() && complete->error.empty()) {
+                complete->error = restoreError;
+            }
+        }
+
+        complete->outcome = navidrome::classifyWriteOutcome(evidence);
+        dispatchBrowserPayload(dispatch, WM_NAVIDROME_PLAYLIST_COMPLETE, complete);
+    }).detach();
+    return 0;
+}
+
+LRESULT BrowserWindow::OnPlaylistComplete(
+        UINT, WPARAM wParam, LPARAM, BOOL&) {
+    std::unique_ptr<PlaylistCompletePayload> payload(
+        reinterpret_cast<PlaylistCompletePayload*>(wParam));
+    if (!m_playlistInProgress || payload->operationId != m_playlistOperationId)
+        return 0;
+    m_playlistInProgress = false;
+    updateActionState();
+    if (payload->identity != m_mutationIdentity) return 0;
+
+    switch (payload->outcome) {
+    case navidrome::BrowserWriteOutcome::Complete:
+        setStatus(navidrome::l10n::playlistUploadComplete(
+            payload->plan.targetName, payload->plan.orderedSongIds.size(),
+            payload->plan.skippedCount));
+        break;
+    case navidrome::BrowserWriteOutcome::Partial:
+        setStatus(navidrome::l10n::playlistUploadPartial(payload->error));
+        break;
+    case navidrome::BrowserWriteOutcome::Restored:
+        setStatus(navidrome::l10n::playlistUploadRestored(payload->error));
+        break;
+    case navidrome::BrowserWriteOutcome::Unknown:
+        setStatus(navidrome::l10n::playlistUploadUnknown(payload->error));
+        break;
+    case navidrome::BrowserWriteOutcome::FailedNoChange:
+        setStatus(navidrome::l10n::playlistUploadFailed(payload->error));
+        break;
+    }
+
+    if (navidrome::shouldRefreshPlaylistCatalog(payload->outcome)) {
+        navidrome::BrowserMutationEvent event;
+        event.identity = payload->identity;
+        event.kind = navidrome::BrowserMutationKind::PlaylistCatalogChanged;
+        navidrome::BrowserMutationHub::get().publish(std::move(event));
+    }
+    return 0;
+}
+
 void BrowserWindow::OnRefresh(UINT, int, HWND) {
-    if (m_queueInProgress) return;
+    if (isBusy()) return;
     m_searchQuery.clear();
     ++m_searchRequestId;
     loadArtists();
@@ -796,15 +1632,17 @@ void BrowserWindow::OnRefresh(UINT, int, HWND) {
 }
 
 void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
-    if (m_queueInProgress) return;
+    if (isBusy()) return;
     wchar_t buf[256] = {};
     m_search.GetWindowText(buf, 256);
     std::string query = wToU8(buf);
+    auto context = navidrome::SubsonicClientWin::get().snapshot();
+    if (!ensureCurrentAccount(context)) return;
     m_searchQuery = query;
     const std::uint64_t requestId = ++m_searchRequestId;
     if (query.size() < 2) {
         if (!m_libraryRoots.empty()) {
-            displayRootNodes(m_libraryRoots);
+            displayGroupedNavigation();
             setStatus(navidrome::l10n::artistCount(m_libraryRoots.size()));
         } else if (!m_libraryLoading) {
             loadArtists();
@@ -813,29 +1651,15 @@ void BrowserWindow::OnSearchChanged(UINT, int, HWND) {
     }
     setStatus(navidrome::l10n::searching);
     auto dispatch = m_dispatchState;
-    std::thread([dispatch, query, requestId]() {
+    std::thread([dispatch, query, requestId, context = std::move(context)]() {
         std::string err;
-        auto results = navidrome::SubsonicClientWin::get().search(query, err);
+        auto results = navidrome::SubsonicClientWin::get().search(context, query, err);
         auto* payload = new LoadedPayload{};
         payload->source = LoadedPayload::Source::Search;
         payload->requestId = requestId;
         payload->error = err;
-        for (auto& s : results.songs) {
-            auto n = std::make_shared<NavidromeNode>();
-            n->type           = NavidromeNode::Song;
-            n->id             = s.id;
-            n->displayName    = s.title;
-            n->subtitle       = s.artist;
-            n->album          = s.album;
-            n->coverArtId     = s.coverArtId;
-            n->track          = s.track;
-            n->year           = s.year;
-            n->duration       = s.duration;
-            n->suffix        = s.suffix;
-            n->metadata       = s;
-            n->childrenLoaded = true;
-            payload->nodes.push_back(n);
-        }
+        for (const auto& song : results.songs)
+            payload->nodes.push_back(BrowserWindow::makeSongNode(song));
         dispatchBrowserPayload(dispatch, WM_NAVIDROME_LOADED, payload);
     }).detach();
 }
@@ -847,62 +1671,26 @@ void BrowserWindow::collectSongsDeep(
         const std::shared_ptr<NavidromeNode>& node,
         std::vector<std::shared_ptr<NavidromeNode>>& out,
         std::size_t& failedItems,
-        const std::shared_ptr<std::atomic_bool>& cancel) {
+        const std::shared_ptr<std::atomic_bool>& cancel,
+        const navidrome::SubsonicRequestContext& context) {
     if (cancellationRequested(cancel)) return;
     if (node->type == NavidromeNode::Song) { out.push_back(node); return; }
     if (node->type == NavidromeNode::Error) { ++failedItems; return; }
     if (node->type == NavidromeNode::Loading) return;
+    if (!navidrome::isBrowserContainer(node->type)) return;
 
-    if (node->type == NavidromeNode::Album) {
-        if (node->childrenLoaded) {
-            for (auto& child : node->children) {
-                if (cancellationRequested(cancel)) return;
-                collectSongsDeep(child, out, failedItems, cancel);
-            }
-        } else {
-            std::string err;
-            auto fetched = navidrome::SubsonicClientWin::get()
-                .getSongsForAlbum(node->id, err);
-            if (cancellationRequested(cancel)) return;
-            if (!err.empty()) ++failedItems;
-            for (auto& s : fetched) {
-                if (cancellationRequested(cancel)) return;
-                auto n = std::make_shared<NavidromeNode>();
-                n->type = NavidromeNode::Song; n->id = s.id;
-                n->displayName = s.title; n->subtitle = s.artist;
-                n->album = s.album;
-                n->coverArtId = s.coverArtId; n->track = s.track;
-                n->suffix = s.suffix;
-                n->year = s.year;
-                n->duration = s.duration; n->childrenLoaded = true;
-                n->metadata = s;
-                out.push_back(n);
-            }
-        }
-        return;
+    std::vector<std::shared_ptr<NavidromeNode>> fetched;
+    const std::vector<std::shared_ptr<NavidromeNode>>* children = &node->children;
+    if (!node->childrenLoaded) {
+        std::string error;
+        fetched = fetchChildren(node, context, error);
+        if (cancellationRequested(cancel)) return;
+        if (!error.empty()) ++failedItems;
+        children = &fetched;
     }
-    if (node->type == NavidromeNode::Artist) {
-        if (node->childrenLoaded) {
-            for (auto& child : node->children) {
-                if (cancellationRequested(cancel)) return;
-                collectSongsDeep(child, out, failedItems, cancel);
-            }
-        } else {
-            std::string err;
-            auto fetched = navidrome::SubsonicClientWin::get()
-                .getAlbumsForArtist(node->id, err);
-            if (cancellationRequested(cancel)) return;
-            if (!err.empty()) ++failedItems;
-            for (auto& a : fetched) {
-                if (cancellationRequested(cancel)) return;
-                auto albumNode = std::make_shared<NavidromeNode>();
-                albumNode->type = NavidromeNode::Album; albumNode->id = a.id;
-                albumNode->displayName = a.name;
-                albumNode->subtitle = a.artist;
-                albumNode->coverArtId = a.coverArtId;
-                collectSongsDeep(albumNode, out, failedItems, cancel);
-            }
-        }
+    for (const auto& child : *children) {
+        if (cancellationRequested(cancel)) return;
+        collectSongsDeep(child, out, failedItems, cancel, context);
     }
 }
 
@@ -1012,7 +1800,7 @@ bool BrowserWindow::rollbackAppend(const PlaylistAppendReceipt& receipt) {
 }
 
 void BrowserWindow::updateActionState() {
-    const BOOL idle = m_queueInProgress ? FALSE : TRUE;
+    const BOOL idle = isBusy() ? FALSE : TRUE;
     if (m_tree.IsWindow()) m_tree.EnableWindow(idle);
     if (m_search.IsWindow()) m_search.EnableWindow(idle);
     if (m_refreshBtn.IsWindow()) m_refreshBtn.EnableWindow(idle);
@@ -1022,6 +1810,10 @@ void BrowserWindow::updateActionState() {
         m_addAllBtn.EnableWindow(idle && !m_libraryRoots.empty());
     if (m_reconcileBtn.IsWindow())
         m_reconcileBtn.EnableWindow(idle && !m_libraryRoots.empty());
+}
+
+bool BrowserWindow::isBusy() const noexcept {
+    return m_queueInProgress || m_mutationInProgress || m_playlistInProgress;
 }
 
 void BrowserWindow::setStatus(const std::string& msg) {

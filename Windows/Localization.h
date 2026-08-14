@@ -30,6 +30,31 @@ inline constexpr wchar_t addAllToPlaylist[] = L"添加全部";
 inline constexpr wchar_t reconcileLibrary[] = L"完整核对";
 inline constexpr wchar_t playNow[] = L"立即播放";
 inline constexpr wchar_t refresh[] = L"刷新";
+inline constexpr wchar_t favorite[] = L"收藏";
+inline constexpr wchar_t unfavorite[] = L"取消收藏";
+inline constexpr wchar_t rating[] = L"评分";
+inline constexpr wchar_t clearRating[] = L"清除评分";
+inline constexpr wchar_t uploadActivePlaylist[] = L"同步当前播放列表到 Navidrome";
+inline constexpr wchar_t uploadDialogTitle[] = L"同步服务器播放列表";
+inline constexpr wchar_t uploadCreate[] = L"创建播放列表";
+inline constexpr wchar_t uploadReplace[] = L"更新所选同名播放列表";
+inline constexpr wchar_t uploadNumberedCopy[] = L"创建编号副本";
+inline constexpr wchar_t uploadCancel[] = L"取消";
+inline constexpr wchar_t uploadCreateInstruction[] =
+    L"将在当前服务器创建播放列表";
+inline constexpr wchar_t uploadCollisionInstruction[] =
+    L"服务器中存在同名播放列表，请选择处理方式";
+
+inline constexpr char smartLists[] = u8"智能列表";
+inline constexpr char serverPlaylists[] = u8"服务器播放列表";
+inline constexpr char artists[] = u8"艺术家";
+inline constexpr char starredSongs[] = u8"收藏的歌曲";
+inline constexpr char starredAlbums[] = u8"收藏的专辑";
+inline constexpr char starredArtists[] = u8"收藏的艺术家";
+inline constexpr char newestAlbums[] = u8"最近添加";
+inline constexpr char frequentAlbums[] = u8"最常播放";
+inline constexpr char recentAlbums[] = u8"最近播放";
+inline constexpr char randomAlbums[] = u8"随机专辑";
 
 inline constexpr char loadingArtists[] = u8"正在加载艺术家…";
 inline constexpr char loading[] = u8"加载中…";
@@ -41,6 +66,26 @@ inline constexpr char libraryNotLoaded[] = u8"完整音乐库尚未加载";
 inline constexpr char selectAtLeastOne[] = u8"请至少选择一项";
 inline constexpr char noSongsSelected[] = u8"未选择歌曲";
 inline constexpr char noSongsFound[] = u8"未找到可添加的歌曲";
+inline constexpr char selectFavoriteTarget[] = u8"请选择歌曲、专辑或艺术家";
+inline constexpr char selectRatingTarget[] = u8"请选择一首歌曲进行评分";
+inline constexpr char updatingFavorite[] = u8"正在同步收藏状态…";
+inline constexpr char updatingRating[] = u8"正在同步评分…";
+inline constexpr char favoriteUpdated[] = u8"收藏状态已同步";
+inline constexpr char ratingUpdated[] = u8"评分已同步";
+inline constexpr char noActivePlaylist[] = u8"当前没有活动播放列表";
+inline constexpr char noNavidromeTracks[] = u8"当前播放列表没有可同步的 Navidrome 歌曲";
+inline constexpr char loadingServerPlaylists[] = u8"正在读取服务器播放列表…";
+inline constexpr char uploadingPlaylist[] = u8"正在同步播放列表…";
+inline constexpr char playlistUploadCancelled[] = u8"已取消播放列表同步";
+inline constexpr char invalidPlaylistUploadChoice[] = u8"播放列表同步选择无效";
+inline constexpr char existingPlaylistSnapshotFailed[] =
+    u8"无法在更新前备份服务器原播放列表";
+inline constexpr char ambiguousCreatedPlaylist[] =
+    u8"服务器未返回唯一的新播放列表标识";
+inline constexpr char playlistVerificationFailed[] =
+    u8"无法读取服务器播放列表以验证同步结果";
+inline constexpr char accountChangedRefreshing[] =
+    u8"Navidrome 服务器或账户已更改，正在刷新浏览器，请稍后重试";
 inline constexpr char checkingNewTracks[] = u8"正在检查新增歌曲…";
 inline constexpr char reconcilingLibrary[] = u8"正在完整核对音乐库…";
 inline constexpr char libraryUpToDate[] = u8"没有新增歌曲，音乐库已是最新";
@@ -66,6 +111,52 @@ inline std::string artistCount(std::size_t count) {
 
 inline std::string searchResultCount(std::size_t count) {
     return std::to_string(count) + u8" 条搜索结果";
+}
+
+inline std::string uploadConfirmation(const std::string& name,
+                                      const std::string& server,
+                                      const std::string& accountName,
+                                      std::size_t mapped,
+                                      std::size_t skipped) {
+    std::string result = u8"本地播放列表：“" + name + u8"”\n服务器：" + server +
+        u8"\n账户：" + accountName + u8"\n将同步 " + std::to_string(mapped) + u8" 首歌曲";
+    if (skipped > 0)
+        result += u8"，跳过 " + std::to_string(skipped) + u8" 个非 Navidrome 条目";
+    return result;
+}
+
+inline std::wstring playlistChoiceSongCount(std::size_t count) {
+    return L"（" + std::to_wstring(count) + L" 首）";
+}
+
+inline std::string playlistUploadComplete(const std::string& name,
+                                          std::size_t count,
+                                          std::size_t skipped) {
+    std::string result = u8"已同步播放列表“" + name + u8"”，共 " +
+        std::to_string(count) + u8" 首歌曲";
+    if (skipped > 0)
+        result += u8"，跳过 " + std::to_string(skipped) + u8" 个条目";
+    return result;
+}
+
+inline std::string playlistUploadPartial(const std::string& message) {
+    return u8"播放列表只同步了部分内容" +
+        (message.empty() ? std::string{} : u8"：" + message);
+}
+
+inline std::string playlistUploadRestored(const std::string& message) {
+    return u8"同步未完成，服务器原播放列表已恢复" +
+        (message.empty() ? std::string{} : u8"：" + message);
+}
+
+inline std::string playlistUploadUnknown(const std::string& message) {
+    return u8"无法确认服务器播放列表的最终状态" +
+        (message.empty() ? std::string{} : u8"：" + message);
+}
+
+inline std::string playlistUploadFailed(const std::string& message) {
+    return u8"播放列表同步失败，服务器内容未更改" +
+        (message.empty() ? std::string{} : u8"：" + message);
 }
 
 inline std::string importProgress(std::size_t completed, std::size_t total,

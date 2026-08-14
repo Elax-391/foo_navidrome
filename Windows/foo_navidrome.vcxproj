@@ -161,6 +161,12 @@
     <ClCompile Include="NavidromePluginWin.cpp" />
     <ClCompile Include="NavidromeInputWin.cpp" />
     <ClCompile Include="BrowserWindow.cpp" />
+    <ClCompile Include="BrowserExtrasLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="BrowserMutationHub.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="MediaEnrichmentLogic.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -197,6 +203,8 @@
     <ClInclude Include="TrackUriMetadata.h" />
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />
+    <ClInclude Include="BrowserExtrasLogic.h" />
+    <ClInclude Include="BrowserMutationHub.h" />
     <ClInclude Include="Localization.h" />
     <ClInclude Include="MediaEnrichmentLogic.h" />
     <ClInclude Include="EsLyricBridge.h" />
