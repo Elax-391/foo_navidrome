@@ -37,6 +37,7 @@ Beyond browse/search/stream, both clients implement — with the same method nam
 | Favorites | `star.view` / `unstar.view` | Star / Unstar context-menu items; `★ ` prefix on the row |
 | Ratings | `setRating.view` | Rating submenu (None, 1-5); rendered as trailing stars |
 | Transcoding | `stream.view` `format` / `maxBitRate` | Two prefs combo boxes (`cfg_stream_format`, `cfg_max_bitrate`) |
+| Download originals | `download.view` | "Download Original Files…" context-menu item; folder picker, never transcoded |
 
 Every playlist mutation that takes a list chunks ids **50 per request** (`navidrome::kPlaylistChunkSize` in `SubsonicTypes.h`). Subsonic passes ids on the query string, and the Windows client's `WinHttpCrackUrl` path buffer is 4096 wchars — a 200-track playlist in one URL silently truncates.
 

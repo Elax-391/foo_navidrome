@@ -89,6 +89,7 @@ public:
         COMMAND_ID_HANDLER_EX(IDC_REMOVE_FROM_PL,   OnRemoveFromPlaylist)
         COMMAND_ID_HANDLER_EX(IDC_RENAME_PLAYLIST,  OnRenamePlaylist)
         COMMAND_ID_HANDLER_EX(IDC_DELETE_PLAYLIST,  OnDeletePlaylist)
+        COMMAND_ID_HANDLER_EX(IDC_DOWNLOAD,         OnDownload)
         COMMAND_RANGE_HANDLER_EX(IDC_RATE_0, IDC_RATE_5, OnRate)
         // One id per server playlist in the "Add to Navidrome Playlist" submenu.
         COMMAND_RANGE_HANDLER_EX(IDC_PLAYLIST_FIRST, IDC_PLAYLIST_LAST,
@@ -114,6 +115,7 @@ private:
         IDC_REMOVE_FROM_PL  = 1017,
         IDC_RENAME_PLAYLIST = 1018,
         IDC_DELETE_PLAYLIST = 1019,
+        IDC_DOWNLOAD        = 1020,
         // One id per entry in the server-playlist submenu; the offset from
         // IDC_PLAYLIST_FIRST indexes m_serverPlaylists.
         IDC_PLAYLIST_FIRST = 1100,
@@ -145,6 +147,7 @@ private:
     void    OnRemoveFromPlaylist(UINT, int, HWND);
     void    OnRenamePlaylist(UINT, int, HWND);
     void    OnDeletePlaylist(UINT, int, HWND);
+    void    OnDownload(UINT, int, HWND);
 
     void    loadArtists();
     void    populateRoot(LoadedPayload* payload);

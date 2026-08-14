@@ -81,6 +81,8 @@ public:
 
     // Carries the configured transcoding preferences (format / maxBitRate).
     std::string streamURL(const std::string& songId);
+    // download.view — always the original file, never transcoded.
+    std::string downloadURL(const std::string& songId);
     std::string coverArtURL(const std::string& id, int size = 0);
     std::string coverArtURL(const SubsonicRequestContext& context,
                             const std::string& id, int size = 0) const;
@@ -108,6 +110,12 @@ public:
                                     const std::string& url,
                                     std::size_t maxBytes,
                                     class abort_callback& abort) const;
+
+    // Streams a URL straight to disk — no size cap and no content sniffing, so
+    // it suits full-quality track downloads that must not sit in memory.
+    // destPath is a native wide path; the file is replaced if it exists.
+    bool httpDownloadToFile(const std::string& url, const std::wstring& destPath,
+                            std::string& outError) const;
 
 private:
     SubsonicClientWin() = default;

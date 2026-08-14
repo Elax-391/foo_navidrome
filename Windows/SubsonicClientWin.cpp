@@ -680,6 +680,10 @@ std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
     return buildURL("stream.view", extra);
 }
 
+std::string navidrome::SubsonicClientWin::downloadURL(const std::string& songId) {
+    return buildURL("download.view", "id=" + urlEncode(songId));
+}
+
 std::string navidrome::SubsonicClientWin::coverArtURL(const std::string& id, int size) {
     std::string extra = "id=" + urlEncode(id);
     if (size > 0) extra += "&size=" + std::to_string(size);
@@ -690,6 +694,105 @@ std::string navidrome::SubsonicClientWin::coverArtURL(
         const SubsonicRequestContext& context, const std::string& id, int size) const {
     return buildCoverArtUrl(context.serverUrl, context.username, context.password,
         context.salt, id, size);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming download to disk — separate from both httpGet() (which builds the
+// body into a std::string) and httpGetBinary() (which caps the size and sniffs
+// for image content). A full-quality track is neither text nor small.
+// ---------------------------------------------------------------------------
+bool navidrome::SubsonicClientWin::httpDownloadToFile(const std::string& urlStr,
+                                                       const std::wstring& destPath,
+                                                       std::string& outError) const {
+    std::wstring wurl = toWide(urlStr);
+
+    URL_COMPONENTS uc = {};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = {}, path[4096] = {};
+    uc.lpszHostName = host; uc.dwHostNameLength = 256;
+    uc.lpszUrlPath  = path; uc.dwUrlPathLength  = 4096;
+
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) { outError = "Invalid URL"; return false; }
+
+    HINTERNET hSess = WinHttpOpen(L"foo_navidrome/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSess) { outError = "WinHttpOpen failed"; return false; }
+    // A track download can run far longer than an API call.
+    WinHttpSetTimeouts(hSess, 0, 15000, 15000, 300000);
+    applySecureProtocols(hSess);
+
+    HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
+    if (!hConn) {
+        WinHttpCloseHandle(hSess);
+        outError = "Connect failed";
+        return false;
+    }
+
+    DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path,
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!hReq) {
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        outError = "WinHttpOpenRequest failed";
+        return false;
+    }
+
+    std::wstring hdrs = customHeadersWide();
+    if (!hdrs.empty())
+        WinHttpAddRequestHeaders(hReq, hdrs.c_str(), (DWORD)-1,
+            WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+    bool ok = false;
+    if (WinHttpSendRequest(hReq, nullptr, 0, nullptr, 0, 0, 0) &&
+        WinHttpReceiveResponse(hReq, nullptr)) {
+        DWORD status = 0, sz = sizeof(status);
+        WinHttpQueryHeaders(hReq,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            nullptr, &status, &sz, nullptr);
+        if (status != 200) {
+            outError = "HTTP " + std::to_string(status);
+        } else {
+            HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                outError = "Cannot create file (err=" +
+                           std::to_string(GetLastError()) + ")";
+            } else {
+                ok = true;
+                DWORD avail = 0;
+                while (ok && WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
+                    std::vector<char> chunk(avail);
+                    DWORD read = 0;
+                    if (!WinHttpReadData(hReq, chunk.data(), avail, &read)) {
+                        outError = "Read failed (err=" +
+                                   std::to_string(GetLastError()) + ")";
+                        ok = false;
+                        break;
+                    }
+                    DWORD written = 0;
+                    if (!WriteFile(hFile, chunk.data(), read, &written, nullptr) ||
+                        written != read) {
+                        outError = "Write failed (err=" +
+                                   std::to_string(GetLastError()) + ")";
+                        ok = false;
+                        break;
+                    }
+                }
+                CloseHandle(hFile);
+                // Don't leave a truncated file behind on a mid-stream failure.
+                if (!ok) DeleteFileW(destPath.c_str());
+            }
+        }
+    } else {
+        outError = "Request failed (err=" + std::to_string(GetLastError()) + ")";
+    }
+
+    WinHttpCloseHandle(hReq);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return ok;
 }
 
 // ---------------------------------------------------------------------------

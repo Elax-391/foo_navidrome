@@ -167,6 +167,18 @@ void testTranscodeParams() {
         "transcoding supplies a codec even when the track has none");
 }
 
+void testFileNames() {
+    using navidrome::sanitizeFileName;
+    check(sanitizeFileName("AC/DC: Back in Black?") == "AC_DC_ Back in Black_",
+        "path and reserved characters are replaced");
+    check(sanitizeFileName("trailing dots...") == "trailing dots",
+        "trailing dots are trimmed (Windows rejects them)");
+    check(sanitizeFileName("   ") == "untitled",
+        "an all-trimmed name falls back to a placeholder");
+    check(sanitizeFileName(u8"中文 title") == u8"中文 title",
+        "non-ASCII names survive untouched");
+}
+
 } // namespace
 
 int main() {
@@ -176,6 +188,7 @@ int main() {
     testCache();
     testConfig();
     testTranscodeParams();
+    testFileNames();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;

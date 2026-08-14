@@ -119,6 +119,25 @@ inline std::string effectiveStreamSuffix(const std::string& format,
     return format;
 }
 
+// Strip characters that are illegal in Windows / macOS file names, so a track
+// title can be used as a download file name. Also trims trailing dots/spaces,
+// which Windows silently rejects.
+inline std::string sanitizeFileName(const std::string& name) {
+    std::string out;
+    for (unsigned char c : name) {
+        switch (c) {
+            case '/': case '\\': case ':': case '*': case '?':
+            case '"': case '<':  case '>': case '|':
+                out.push_back('_');
+                break;
+            default:
+                out.push_back(static_cast<char>(c < 0x20 ? ' ' : c));
+        }
+    }
+    while (!out.empty() && (out.back() == '.' || out.back() == ' ')) out.pop_back();
+    return out.empty() ? std::string("untitled") : out;
+}
+
 // Extract the song id from a navidrome://track/<id>?... URI. Returns "" when
 // the path isn't one of ours. Shared so the scrobbler on both platforms maps a
 // playing metadb handle back to a Subsonic song id the same way.

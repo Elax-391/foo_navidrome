@@ -295,6 +295,11 @@ static NSString *formatDuration(NSTimeInterval secs) {
                                          keyEquivalent:@""];
     uploadItem.target = self;
 
+    NSMenuItem *downloadItem = [rowMenu addItemWithTitle:@"Download Original Files…"
+                                                  action:@selector(downloadSelection:)
+                                           keyEquivalent:@""];
+    downloadItem.target = self;
+
     _outlineView.menu = rowMenu;
 
     // Columns
@@ -914,6 +919,93 @@ static NSString *formatDuration(NSTimeInterval secs) {
             [self refreshServerPlaylists];
         });
     });
+}
+
+// ---------------------------------------------------------------------------
+// Download originals
+//
+// download.view always serves the file as stored on the server — the streaming
+// transcode preferences deliberately don't apply here.
+// ---------------------------------------------------------------------------
+
+- (IBAction)downloadSelection:(id)sender {
+    NSArray<NavidromeNode *> *nodes = [self selectedNodes];
+    if (nodes.count == 0) { _statusLabel.stringValue = @"Select at least one item first"; return; }
+
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = NO;
+    panel.canChooseDirectories = YES;
+    panel.canCreateDirectories = YES;
+    panel.allowsMultipleSelection = NO;
+    panel.prompt = @"Download Here";
+    panel.message = @"Choose a folder for the downloaded tracks.";
+    if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
+    NSString *destDir = panel.URL.path;
+
+    [_spinner startAnimation:nil];
+    _statusLabel.stringValue = @"Resolving tracks…";
+
+    NSArray *nodesCopy = [nodes copy];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSMutableArray<NavidromeNode *> *songs = [NSMutableArray array];
+        NSError *err = nil;
+        for (NavidromeNode *n in nodesCopy) {
+            [self collectSongsDeep:n into:songs error:&err];
+            if (err) break;
+        }
+        if (err) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self->_spinner stopAnimation:nil];
+                self->_statusLabel.stringValue =
+                    [NSString stringWithFormat:@"Error: %@", err.localizedDescription];
+            });
+            return;
+        }
+
+        NSUInteger done = 0, failed = 0;
+        for (NSUInteger i = 0; i < songs.count; i++) {
+            NavidromeNode *s = songs[i];
+            NSUInteger position = i + 1;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self->_statusLabel.stringValue =
+                    [NSString stringWithFormat:@"Downloading %lu/%lu…",
+                     (unsigned long)position, (unsigned long)songs.count];
+            });
+
+            NSURL *url = [SubsonicClient.sharedClient downloadURLForSongId:s.nodeId];
+            if (!url) { failed++; continue; }
+
+            NSString *path = [destDir stringByAppendingPathComponent:
+                              [self downloadFileNameForNode:s]];
+            NSError *one = nil;
+            if ([SubsonicClient.sharedClient downloadURL:url toPath:path error:&one]) done++;
+            else failed++;
+        }
+
+        NSUInteger okCount = done, failCount = failed;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self->_spinner stopAnimation:nil];
+            self->_statusLabel.stringValue = failCount == 0
+                ? [NSString stringWithFormat:@"Downloaded %lu track(s)", (unsigned long)okCount]
+                : [NSString stringWithFormat:@"Downloaded %lu, %lu failed",
+                   (unsigned long)okCount, (unsigned long)failCount];
+        });
+    });
+}
+
+// "<track>. <artist> - <title>.<suffix>" with anything illegal replaced. The
+// suffix comes from the node when known; download.view keeps the original
+// container either way, so a missing suffix just means no extension.
+- (NSString *)downloadFileNameForNode:(NavidromeNode *)node {
+    NSMutableString *name = [NSMutableString string];
+    if (node.trackNumber > 0) [name appendFormat:@"%02ld. ", (long)node.trackNumber];
+    if (node.subtitle.length) [name appendFormat:@"%@ - ", node.subtitle];
+    [name appendString:node.displayName.length ? node.displayName : @"untitled"];
+
+    std::string clean = navidrome::sanitizeFileName([name UTF8String] ?: "untitled");
+    NSString *result = [NSString stringWithUTF8String:clean.c_str()];
+    if (node.suffix.length) result = [result stringByAppendingFormat:@".%@", node.suffix];
+    return result;
 }
 
 // ---------------------------------------------------------------------------

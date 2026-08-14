@@ -7,8 +7,12 @@
 #include <SDK/playable_location.h>
 #include <SDK/playback_control.h>
 #include <commctrl.h>
+#include <shlobj.h>
 #include <algorithm>
+#include <cstdio>
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
 
 static std::wstring u8ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -145,6 +149,30 @@ private:
     bool         m_accepted = false;
     bool         m_done     = false;
 };
+
+// Folder chooser for "Download Original Files". SHBrowseForFolder keeps this to
+// one call with no COM object lifetime to manage.
+bool pickFolder(HWND owner, std::wstring& outPath) {
+    wchar_t display[MAX_PATH] = {};
+    BROWSEINFOW bi = {};
+    bi.hwndOwner      = owner;
+    bi.pszDisplayName = display;
+    bi.lpszTitle      = L"Choose a folder for the downloaded tracks";
+    bi.ulFlags        = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+
+    // BIF_NEWDIALOGSTYLE needs an initialized apartment. foobar's UI thread
+    // already is one, so this normally returns S_FALSE; undo only what we did.
+    HRESULT co = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    LPITEMIDLIST pidl = ::SHBrowseForFolderW(&bi);
+    bool ok = false;
+    if (pidl) {
+        wchar_t path[MAX_PATH] = {};
+        if (::SHGetPathFromIDListW(pidl, path)) { outPath = path; ok = true; }
+        ::CoTaskMemFree(pidl);
+    }
+    if (SUCCEEDED(co)) ::CoUninitialize();
+    return ok;
+}
 
 } // namespace
 
@@ -716,6 +744,7 @@ void BrowserWindow::OnContextMenu(CWindow wnd, CPoint point) {
     menu.AppendMenu(MF_SEPARATOR);
     menu.AppendMenu(MF_STRING, IDC_SEND_PLAYLIST,
                     L"Send Active Playlist to Navidrome");
+    menu.AppendMenu(MF_STRING, IDC_DOWNLOAD, L"Download Original Files…");
 
     menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, *this);
 
@@ -841,6 +870,65 @@ void BrowserWindow::OnSendActivePlaylist(UINT, int, HWND) {
             setStatus(msg + ")");
             invalidatePlaylistsCategory();
             refreshServerPlaylists();
+        });
+    }).detach();
+}
+
+// ---------------------------------------------------------------------------
+// Download originals
+//
+// download.view always serves the file as stored on the server — the streaming
+// transcode preferences deliberately don't apply here.
+// ---------------------------------------------------------------------------
+void BrowserWindow::OnDownload(UINT, int, HWND) {
+    auto selected = selectedNodes();
+    if (selected.empty()) { setStatus("Select at least one item"); return; }
+
+    std::wstring destDir;
+    if (!pickFolder(*this, destDir)) return;
+
+    setStatus("Resolving tracks…");
+    std::thread([this, destDir, selected]() {
+        std::vector<std::shared_ptr<NavidromeNode>> songs;
+        for (auto& n : selected) collectSongsDeep(n, songs);
+
+        std::size_t done = 0, failed = 0;
+        for (std::size_t i = 0; i < songs.size(); ++i) {
+            const std::size_t position = i + 1, total = songs.size();
+            fb2k::inMainThread([this, position, total]() {
+                if (IsWindow())
+                    setStatus("Downloading " + std::to_string(position) + "/" +
+                              std::to_string(total) + "…");
+            });
+
+            auto& s = songs[i];
+            // "<track>. <artist> - <title>.<suffix>"
+            std::string name;
+            if (s->track > 0) {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "%02d. ", s->track);
+                name += buf;
+            }
+            if (!s->subtitle.empty()) name += s->subtitle + " - ";
+            name += s->displayName.empty() ? "untitled" : s->displayName;
+            name = navidrome::sanitizeFileName(name);
+            if (!s->suffix.empty()) name += "." + s->suffix;
+
+            std::string err;
+            std::string url = navidrome::SubsonicClientWin::get().downloadURL(s->id);
+            if (navidrome::SubsonicClientWin::get()
+                    .httpDownloadToFile(url, destDir + L"\\" + u8ToWide(name), err))
+                ++done;
+            else
+                ++failed;
+        }
+
+        fb2k::inMainThread([this, done, failed]() {
+            if (!IsWindow()) return;
+            setStatus(failed == 0
+                ? "Downloaded " + std::to_string(done) + " track(s)"
+                : "Downloaded " + std::to_string(done) + ", " +
+                  std::to_string(failed) + " failed");
         });
     }).detach();
 }

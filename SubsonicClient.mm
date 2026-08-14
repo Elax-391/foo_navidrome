@@ -633,6 +633,11 @@ static SubsonicAlbum *parseAlbum(NSDictionary *a) {
             base, urlEncode(songId), artParam, auth, transcode.c_str()];
 }
 
+- (NSURL *)downloadURLForSongId:(NSString *)songId {
+    NSString *params = [NSString stringWithFormat:@"id=%@", urlEncode(songId)];
+    return [self urlForEndpoint:@"download.view" params:params];
+}
+
 - (NSURL *)coverArtURLForId:(NSString *)coverArtId size:(NSInteger)size {
     NSString *base = [NSString stringWithUTF8String:navidrome::cfg_server_url.get().c_str()];
     while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
@@ -667,6 +672,48 @@ static SubsonicAlbum *parseAlbum(NSDictionary *a) {
         return nil;
     }
     return responseData;
+}
+
+- (BOOL)downloadURL:(NSURL *)url toPath:(NSString *)path error:(NSError **)outError {
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    NavidromeApplyCustomHeaders(request);
+    // A track download can outlast the 30 s resource timeout the shared session
+    // uses for API calls.
+    request.timeoutInterval = 300.0;
+
+    __block NSURL *tempURL = nil;
+    __block NSError *taskError = nil;
+    __block NSHTTPURLResponse *httpResponse = nil;
+    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+    [[_session downloadTaskWithRequest:request
+                     completionHandler:^(NSURL *location, NSURLResponse *response, NSError *error) {
+        taskError    = error;
+        httpResponse = (NSHTTPURLResponse *)response;
+        // The temp file is deleted as soon as this handler returns, so move it
+        // to its final home here rather than after the semaphore is signalled.
+        if (location && !error && httpResponse.statusCode == 200) {
+            NSError *moveErr = nil;
+            [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+            if ([[NSFileManager defaultManager] moveItemAtURL:location
+                                                        toURL:[NSURL fileURLWithPath:path]
+                                                        error:&moveErr]) {
+                tempURL = location;
+            } else {
+                taskError = moveErr;
+            }
+        }
+        dispatch_semaphore_signal(sema);
+    }] resume];
+    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+
+    if (taskError) { if (outError) *outError = taskError; return NO; }
+    if (httpResponse && httpResponse.statusCode != 200) {
+        if (outError) *outError = [NSError errorWithDomain:@"SubsonicClient"
+            code:httpResponse.statusCode userInfo:@{NSLocalizedDescriptionKey:
+                [NSString stringWithFormat:@"HTTP %ld", (long)httpResponse.statusCode]}];
+        return NO;
+    }
+    return tempURL != nil;
 }
 
 @end

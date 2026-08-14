@@ -140,7 +140,7 @@ Then:
 - Select one or more items and click **Add to Playlist** or **Play Now**
 - Double-click a song to play it immediately
 - Use the search field to search across your library
-- Right-click for **Star / Unstar**, a **Rating** submenu (None, 1-5 stars) and **Send Active Playlist to Navidrome**
+- Right-click for **Star / Unstar**, a **Rating** submenu (None, 1-5 stars), **Send Active Playlist to Navidrome** and **Download Original Files…**
 
 Any of those actions work on whole albums or artists too — the component expands
 the selection to tracks for you. Ratings apply to songs only, which is what

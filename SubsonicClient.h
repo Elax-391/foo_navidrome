@@ -150,9 +150,15 @@ typedef NS_ENUM(NSInteger, SubsonicStarKind) {
 - (NSString *)streamURLForSongId:(NSString *)songId coverArtId:(NSString *)coverArtId;
 // Returns cover art URL (size 0 = original)
 - (NSURL *)coverArtURLForId:(NSString *)coverArtId size:(NSInteger)size;
+// download.view — always the original file, never transcoded.
+- (NSURL *)downloadURLForSongId:(NSString *)songId;
 
 // Synchronous GET of arbitrary URL data with the configured custom HTTP headers
 // applied (used by the album-art extractor). Returns nil + sets *error on failure.
 - (NSData *)dataForURL:(NSURL *)url error:(NSError **)error;
+
+// Synchronous download straight to disk — streams to a temp file rather than
+// buffering the body, so a full-quality FLAC doesn't sit in memory.
+- (BOOL)downloadURL:(NSURL *)url toPath:(NSString *)path error:(NSError **)error;
 
 @end
