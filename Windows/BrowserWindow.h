@@ -165,9 +165,9 @@ private:
     // Tree label for a node: track number, favorite marker and rating stars.
     std::string labelFor(const std::shared_ptr<NavidromeNode>& node) const;
     void    refreshLabel(const std::shared_ptr<NavidromeNode>& node);
-    void    enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> songs, bool play);
+    void    enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> songs, bool play, bool clearFirst = false);
     std::vector<std::shared_ptr<NavidromeNode>> selectedNodes();
-    void    queueSelected(bool play, bool closeAfter);
+    void    queueSelected(bool play, bool closeAfter, bool clearFirst = false);
     void    setStatus(const std::string& msg);
 
     // Server playlist management. Selections are resolved to song ids the same

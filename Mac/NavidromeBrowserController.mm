@@ -605,6 +605,15 @@ static NSString *formatDuration(NSTimeInterval secs) {
 - (void)addNodesToPlaylist:(NSArray<NavidromeNode *> *)nodes
                       play:(BOOL)play
              closeWhenDone:(BOOL)closeWhenDone {
+    [self addNodesToPlaylist:nodes play:play closeWhenDone:closeWhenDone clearFirst:NO];
+}
+
+// clearFirst replaces the active playlist's contents instead of appending —
+// used by the Enter shortcut ("select artist/album, Enter = play just this").
+- (void)addNodesToPlaylist:(NSArray<NavidromeNode *> *)nodes
+                      play:(BOOL)play
+             closeWhenDone:(BOOL)closeWhenDone
+                clearFirst:(BOOL)clearFirst {
     if (nodes.count == 0) {
         _statusLabel.stringValue = @"Select at least one item first";
         return;
@@ -615,7 +624,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
     for (NavidromeNode *n in nodes)
         if (n.type != NavidromeNodeTypeSong) { allSongs = NO; break; }
     if (allSongs) {
-        [self enqueueNodes:nodes play:play];
+        [self enqueueNodes:nodes play:play clearFirst:clearFirst];
         if (closeWhenDone) [self closeStandaloneWindow];
         return;
     }
@@ -638,17 +647,17 @@ static NSString *formatDuration(NSTimeInterval secs) {
                 _statusLabel.stringValue = [NSString stringWithFormat:@"Error: %@",
                                             err.localizedDescription];
             } else {
-                [self enqueueNodes:songs play:play];
+                [self enqueueNodes:songs play:play clearFirst:clearFirst];
                 if (closeWhenDone) [self closeStandaloneWindow];
             }
         });
     });
 }
 
-// Return / Enter in the tree: queue the selection, start playing the first
-// track, and close the window (standalone only).
+// Return / Enter in the tree: replace the active playlist with the selection,
+// start playing, and close the window (standalone only).
 - (void)commitSelectionFromKeyboard {
-    [self addNodesToPlaylist:[self selectedNodes] play:YES closeWhenDone:YES];
+    [self addNodesToPlaylist:[self selectedNodes] play:YES closeWhenDone:YES clearFirst:YES];
 }
 
 - (void)closeStandaloneWindow {
@@ -683,6 +692,12 @@ static NSString *formatDuration(NSTimeInterval secs) {
 }
 
 - (void)enqueueNodes:(NSArray<NavidromeNode *> *)songNodes play:(BOOL)play {
+    [self enqueueNodes:songNodes play:play clearFirst:NO];
+}
+
+- (void)enqueueNodes:(NSArray<NavidromeNode *> *)songNodes
+                play:(BOOL)play
+          clearFirst:(BOOL)clearFirst {
     if (songNodes.count == 0) {
         _statusLabel.stringValue = @"No songs selected";
         return;
@@ -734,14 +749,16 @@ static NSString *formatDuration(NSTimeInterval secs) {
 
     auto tracksCopy = std::make_shared<metadb_handle_list>(tracks);
     bool doPlay = play;
+    bool doClearFirst = clearFirst;
 
-    fb2k::inMainThread([tracksCopy, doPlay] {
+    fb2k::inMainThread([tracksCopy, doPlay, doClearFirst] {
         auto pm = playlist_manager::get();
         t_size activePlaylist = pm->get_active_playlist();
         if (activePlaylist == pfc_infinite) {
             pm->create_playlist("Navidrome", ~0, pfc_infinite);
             activePlaylist = pm->get_active_playlist();
         }
+        if (doClearFirst) pm->playlist_clear(activePlaylist);
         t_size insertPos = pm->playlist_get_item_count(activePlaylist);
         pm->playlist_add_items(activePlaylist, *tracksCopy, pfc::bit_array_false());
 

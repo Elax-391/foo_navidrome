@@ -641,17 +641,17 @@ std::vector<std::shared_ptr<NavidromeNode>> BrowserWindow::selectedNodes() {
 // Resolve the selected nodes to songs on a background thread, then enqueue on
 // the main thread. closeAfter hides the window once the tracks are queued \u2014
 // used by the Enter shortcut so "select artist + Enter" queues and dismisses.
-void BrowserWindow::queueSelected(bool play, bool closeAfter) {
+void BrowserWindow::queueSelected(bool play, bool closeAfter, bool clearFirst) {
     auto selected = selectedNodes();
     if (selected.empty()) { setStatus("Select at least one item"); return; }
 
     setStatus("Loading tracks\u2026");
-    std::thread([this, selected, play, closeAfter]() {
+    std::thread([this, selected, play, closeAfter, clearFirst]() {
         std::vector<std::shared_ptr<NavidromeNode>> songs;
         for (auto& n : selected)
             collectSongsDeep(n, songs);
-        fb2k::inMainThread([this, songs, play, closeAfter]() mutable {
-            enqueueNodes(std::move(songs), play);
+        fb2k::inMainThread([this, songs, play, closeAfter, clearFirst]() mutable {
+            enqueueNodes(std::move(songs), play, clearFirst);
             if (closeAfter && !m_embedded && IsWindow()) ShowWindow(SW_HIDE);
         });
     }).detach();
@@ -660,11 +660,10 @@ void BrowserWindow::queueSelected(bool play, bool closeAfter) {
 void BrowserWindow::OnAdd(UINT, int, HWND)  { queueSelected(false, false); }
 void BrowserWindow::OnPlay(UINT, int, HWND) { queueSelected(true,  false); }
 
-// Enter in the tree = add the selected item(s) to the playlist, start playing
-// the first track, and close the window. A quick "queue this artist, play it,
-// and get out of my way" shortcut.
+// Enter in the tree = replace the active playlist with the selected item(s),
+// start playing, and close the window. A quick "jump to this artist" shortcut.
 LRESULT BrowserWindow::OnTreeReturn(LPNMHDR) {
-    queueSelected(true, true);
+    queueSelected(true, true, true);
     return 0;
 }
 
@@ -1226,7 +1225,7 @@ void BrowserWindow::collectSongsDeep(std::shared_ptr<NavidromeNode> node,
 // Enqueue to foobar2000 playlist (call from main thread)
 // ---------------------------------------------------------------------------
 void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> songs,
-                                 bool play) {
+                                 bool play, bool clearFirst) {
     if (songs.empty()) { setStatus("No songs selected"); return; }
 
     metadb_handle_list tracks;
@@ -1265,6 +1264,7 @@ void BrowserWindow::enqueueNodes(std::vector<std::shared_ptr<NavidromeNode>> son
         pm->create_playlist("Navidrome", ~0, pfc_infinite);
         pl = pm->get_active_playlist();
     }
+    if (clearFirst) pm->playlist_clear(pl);
     t_size insertPos = pm->playlist_get_item_count(pl);
     pm->playlist_add_items(pl, tracks, pfc::bit_array_false());
 
