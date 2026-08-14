@@ -39,6 +39,7 @@ typedef NS_ENUM(NSInteger, NavidromeCategoryKind) {
 @property (nonatomic, assign) NSInteger year;
 @property (nonatomic, assign) NSTimeInterval duration;
 @property (nonatomic, copy)   NSString *coverArtId;
+@property (nonatomic, copy)   NSString *suffix;         // codec suffix (mp3/flac/…)
 @property (nonatomic, assign) NavidromeCategoryKind categoryKind;  // category nodes only
 @property (nonatomic, assign) BOOL      starred;    // server-side favorite
 @property (nonatomic, assign) NSInteger rating;     // 0 = unrated, else 1-5

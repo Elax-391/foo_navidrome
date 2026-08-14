@@ -54,6 +54,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
     n.year         = s.year;
     n.duration     = s.duration;
     n.coverArtId   = s.coverArtId;
+    n.suffix       = s.suffix;
     n.starred      = s.starred;
     n.rating       = s.rating;
     n.children     = [NSMutableArray array];
@@ -696,7 +697,7 @@ static NSString *formatDuration(NSTimeInterval secs) {
                                                         node.year,
                                                         node.duration,
                                                         node.coverArtId ?: @"",
-                                                        @"");
+                                                        node.suffix ?: @"");
         if (!uri) continue;
 
         metadb_handle_ptr handle;
