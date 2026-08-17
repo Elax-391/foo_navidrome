@@ -50,6 +50,8 @@ static constexpr GUID guid_mainmenu_group = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xb
 static constexpr GUID guid_mainmenu_cmd   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x07} };
 static constexpr GUID guid_cfg_custom_headers = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0a} };
 static constexpr GUID guid_cfg_scrobble   = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0b} };
+static constexpr GUID guid_cfg_stream_format = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0c} };
+static constexpr GUID guid_cfg_max_bitrate = { 0xa1b2c3d4,0x1111,0x2222,{0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,0x0d} };
 
 // ---------------------------------------------------------------------------
 // Config vars
@@ -66,6 +68,8 @@ namespace navidrome {
     // Keep the modern bool type and GUID aligned with the upstream/macOS
     // setting so its serialization remains stable across platforms.
     cfg_var_modern::cfg_bool cfg_scrobble(guid_cfg_scrobble, true);
+    cfg_string cfg_stream_format(guid_cfg_stream_format, "");
+    cfg_var_modern::cfg_int cfg_max_bitrate(guid_cfg_max_bitrate, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +264,8 @@ public:
         SetDlgItemText(IDC_USER, L"");
         SetDlgItemText(IDC_PASS, L"");
         CheckDlgButton(IDC_SCROBBLE, BST_CHECKED);
+        m_format.SetCurSel(0);
+        m_bitrate.SetCurSel(0);
         m_loading = false;
         m_changed = true; notifyCb();
     }
@@ -273,11 +279,33 @@ public:
         COMMAND_HANDLER_EX(IDC_TEST, BN_CLICKED, OnTest)
         COMMAND_HANDLER_EX(IDC_HEADERS, BN_CLICKED, OnHeaders)
         COMMAND_HANDLER_EX(IDC_SCROBBLE, BN_CLICKED, OnChanged)
+        COMMAND_HANDLER_EX(IDC_FORMAT, CBN_SELCHANGE, OnChanged)
+        COMMAND_HANDLER_EX(IDC_BITRATE, CBN_SELCHANGE, OnChanged)
     END_MSG_MAP()
 
 private:
     enum { IDC_URL=1001, IDC_USER=1002, IDC_PASS=1003, IDC_TEST=1004,
-           IDC_STATUS=1005, IDC_HEADERS=1006, IDC_SCROBBLE=1007 };
+           IDC_STATUS=1005, IDC_HEADERS=1006, IDC_SCROBBLE=1007,
+           IDC_FORMAT=1008, IDC_BITRATE=1009 };
+    struct FormatOption {
+        const wchar_t* label;
+        const char* value;
+    };
+    static const FormatOption* formatOptions(std::size_t& count) {
+        static const FormatOption options[] = {
+            {navidrome::l10n::serverDefault, ""},
+            {navidrome::l10n::originalFormat, "raw"},
+            {L"MP3", "mp3"}, {L"Opus", "opus"}, {L"AAC", "aac"},
+            {L"FLAC", "flac"}, {L"WAV", "wav"},
+        };
+        count = sizeof(options) / sizeof(options[0]);
+        return options;
+    }
+    static const int* bitrateOptions(std::size_t& count) {
+        static const int options[] = {0, 64, 96, 128, 192, 256, 320};
+        count = sizeof(options) / sizeof(options[0]);
+        return options;
+    }
     // Posted from the background ping thread back to the UI thread (see OnTest).
     static constexpr UINT WM_TEST_RESULT = WM_USER + 200;
 
@@ -316,6 +344,32 @@ private:
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SCROBBLE)), nullptr, nullptr);
         SendMessageW(scr, WM_SETFONT, reinterpret_cast<WPARAM>(f), 0);
 
+        lbl(navidrome::l10n::streamFormat, 8, 224, labelW, 18);
+        m_format.Create(*this, CWindow::rcDefault, nullptr,
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWNLIST,
+            0, IDC_FORMAT);
+        m_format.SetWindowPos(nullptr, editX, 220, 190, 180, SWP_NOZORDER);
+        m_format.SetFont(f);
+        std::size_t formatCount = 0;
+        const auto* formats = formatOptions(formatCount);
+        for (std::size_t index = 0; index < formatCount; ++index)
+            m_format.AddString(formats[index].label);
+
+        lbl(navidrome::l10n::maxBitrate, 8, 254, labelW, 18);
+        m_bitrate.Create(*this, CWindow::rcDefault, nullptr,
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWNLIST,
+            0, IDC_BITRATE);
+        m_bitrate.SetWindowPos(nullptr, editX, 250, 190, 180, SWP_NOZORDER);
+        m_bitrate.SetFont(f);
+        std::size_t bitrateCount = 0;
+        const auto* bitrates = bitrateOptions(bitrateCount);
+        for (std::size_t index = 0; index < bitrateCount; ++index) {
+            const auto label = bitrates[index] == 0
+                ? std::wstring(navidrome::l10n::unlimitedBitrate)
+                : std::to_wstring(bitrates[index]) + L" kbps";
+            m_bitrate.AddString(label.c_str());
+        }
+
         loadSettings();
         return 0;
     }
@@ -329,6 +383,28 @@ private:
         SetDlgItemText(IDC_PASS, pfc::stringcvt::string_wide_from_utf8(navidrome::cfg_password.get().c_str()));
         CheckDlgButton(IDC_SCROBBLE,
             navidrome::cfg_scrobble.get() ? BST_CHECKED : BST_UNCHECKED);
+        const std::string configuredFormat = navidrome::cfg_stream_format.get().c_str();
+        std::size_t formatCount = 0;
+        const auto* formats = formatOptions(formatCount);
+        int formatIndex = 0;
+        for (std::size_t index = 0; index < formatCount; ++index) {
+            if (configuredFormat == formats[index].value) {
+                formatIndex = static_cast<int>(index);
+                break;
+            }
+        }
+        m_format.SetCurSel(formatIndex);
+        const int configuredBitrate = static_cast<int>(navidrome::cfg_max_bitrate.get());
+        std::size_t bitrateCount = 0;
+        const auto* bitrates = bitrateOptions(bitrateCount);
+        int bitrateIndex = 0;
+        for (std::size_t index = 0; index < bitrateCount; ++index) {
+            if (configuredBitrate == bitrates[index]) {
+                bitrateIndex = static_cast<int>(index);
+                break;
+            }
+        }
+        m_bitrate.SetCurSel(bitrateIndex);
         m_loading = false;
         m_changed = false;
     }
@@ -348,6 +424,16 @@ private:
         saveCredentials();
         navidrome::cfg_scrobble.set(
             IsDlgButtonChecked(IDC_SCROBBLE) == BST_CHECKED);
+        std::size_t formatCount = 0;
+        const auto* formats = formatOptions(formatCount);
+        const int formatIndex = m_format.GetCurSel();
+        if (formatIndex >= 0 && static_cast<std::size_t>(formatIndex) < formatCount)
+            navidrome::cfg_stream_format.set(formats[formatIndex].value);
+        std::size_t bitrateCount = 0;
+        const auto* bitrates = bitrateOptions(bitrateCount);
+        const int bitrateIndex = m_bitrate.GetCurSel();
+        if (bitrateIndex >= 0 && static_cast<std::size_t>(bitrateIndex) < bitrateCount)
+            navidrome::cfg_max_bitrate.set(bitrates[bitrateIndex]);
     }
 
     void OnChanged(UINT, int, HWND) {
@@ -384,6 +470,7 @@ private:
         return 0;
     }
 
+    CComboBox m_format, m_bitrate;
     preferences_page_callback::ptr m_cb;
     bool m_changed = false;
     bool m_loading = false;

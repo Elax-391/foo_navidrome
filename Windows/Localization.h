@@ -23,6 +23,11 @@ inline constexpr wchar_t connected[] = L"已连接！";
 inline constexpr char failedUtf8[] = u8"失败";
 inline constexpr wchar_t customHeaders[] = L"自定义请求头…";
 inline constexpr wchar_t reportPlays[] = L"向 Navidrome 汇报播放记录（Scrobble）";
+inline constexpr wchar_t streamFormat[] = L"流格式：";
+inline constexpr wchar_t maxBitrate[] = L"最高码率：";
+inline constexpr wchar_t serverDefault[] = L"服务器默认";
+inline constexpr wchar_t originalFormat[] = L"原始格式（不转码）";
+inline constexpr wchar_t unlimitedBitrate[] = L"不限";
 
 inline constexpr wchar_t browserTitle[] = L"Navidrome 浏览器";
 inline constexpr wchar_t searchCue[] = L"搜索艺术家、专辑、歌曲…";
@@ -41,6 +46,13 @@ inline constexpr wchar_t uploadCreate[] = L"创建播放列表";
 inline constexpr wchar_t uploadReplace[] = L"更新所选同名播放列表";
 inline constexpr wchar_t uploadNumberedCopy[] = L"创建编号副本";
 inline constexpr wchar_t uploadCancel[] = L"取消";
+inline constexpr wchar_t downloadOriginal[] = L"下载原始文件…";
+inline constexpr wchar_t downloadFolderPrompt[] = L"选择原始歌曲的保存文件夹";
+inline constexpr wchar_t renamePlaylist[] = L"重命名服务器播放列表…";
+inline constexpr wchar_t deletePlaylist[] = L"删除服务器播放列表…";
+inline constexpr wchar_t renamePlaylistTitle[] = L"重命名服务器播放列表";
+inline constexpr wchar_t renamePlaylistPrompt[] = L"新名称：";
+inline constexpr wchar_t deletePlaylistTitle[] = L"删除服务器播放列表";
 inline constexpr wchar_t uploadCreateInstruction[] =
     L"将在当前服务器创建播放列表";
 inline constexpr wchar_t uploadCollisionInstruction[] =
@@ -48,6 +60,7 @@ inline constexpr wchar_t uploadCollisionInstruction[] =
 
 inline constexpr char smartLists[] = u8"智能列表";
 inline constexpr char serverPlaylists[] = u8"服务器播放列表";
+inline constexpr char genres[] = u8"流派";
 inline constexpr char artists[] = u8"艺术家";
 inline constexpr char starredSongs[] = u8"收藏的歌曲";
 inline constexpr char starredAlbums[] = u8"收藏的专辑";
@@ -76,6 +89,13 @@ inline constexpr char ratingUpdated[] = u8"评分已同步";
 inline constexpr char noActivePlaylist[] = u8"当前没有活动播放列表";
 inline constexpr char noNavidromeTracks[] = u8"当前播放列表没有可同步的 Navidrome 歌曲";
 inline constexpr char loadingServerPlaylists[] = u8"正在读取服务器播放列表…";
+inline constexpr char resolvingDownloads[] = u8"正在解析待下载歌曲…";
+inline constexpr char downloadingOriginals[] = u8"正在下载原始文件…";
+inline constexpr char selectServerPlaylist[] = u8"请选择一个服务器播放列表";
+inline constexpr char renamingPlaylist[] = u8"正在重命名服务器播放列表…";
+inline constexpr char deletingPlaylist[] = u8"正在删除服务器播放列表…";
+inline constexpr char playlistRenamed[] = u8"服务器播放列表已重命名";
+inline constexpr char playlistDeleted[] = u8"服务器播放列表已删除";
 inline constexpr char uploadingPlaylist[] = u8"正在同步播放列表…";
 inline constexpr char playlistUploadCancelled[] = u8"已取消播放列表同步";
 inline constexpr char invalidPlaylistUploadChoice[] = u8"播放列表同步选择无效";
@@ -108,6 +128,22 @@ inline constexpr char stateRollbackFailed[] = u8"状态提交失败，且无法�
 
 inline std::string artistCount(std::size_t count) {
     return std::to_string(count) + u8" 位艺术家";
+}
+
+inline std::string genreSongCount(std::size_t count) {
+    return std::to_string(count) + u8" 首歌曲";
+}
+
+inline std::string downloadedTracks(std::size_t succeeded, std::size_t failed) {
+    std::string result = u8"已下载 " + std::to_string(succeeded) + u8" 首歌曲";
+    if (failed > 0)
+        result += u8"，" + std::to_string(failed) + u8" 首失败";
+    return result;
+}
+
+inline std::wstring deletePlaylistConfirmation(const std::wstring& name) {
+    return L"确定从服务器删除播放列表“" + name +
+        L"”吗？\r\n\r\n歌曲文件不会被删除。";
 }
 
 inline std::string searchResultCount(std::size_t count) {
@@ -219,6 +255,14 @@ inline std::string httpError(unsigned long status) {
 
 inline std::string requestError(unsigned long code) {
     return u8"请求失败（错误码=" + std::to_string(code) + u8"）";
+}
+
+inline std::string fileCreateError(unsigned long code) {
+    return u8"无法创建下载文件（错误码=" + std::to_string(code) + u8"）";
+}
+
+inline std::string fileWriteError(unsigned long code) {
+    return u8"无法写入下载文件（错误码=" + std::to_string(code) + u8"）";
 }
 
 inline constexpr char unknownSubsonicError[] = u8"未知的 Subsonic 错误";

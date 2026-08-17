@@ -430,6 +430,19 @@ std::vector<navidrome::ServerPlaylist> navidrome::parsePlaylistArrayJson(
     return parseObjectMember<ServerPlaylist>(json, memberName, parsePlaylistJson);
 }
 
+std::vector<navidrome::Genre> navidrome::parseGenreArrayJson(
+        const std::string& json, const std::string& memberName) {
+    return parseObjectMember<Genre>(json, memberName, [](const std::string& item) {
+        Genre genre;
+        genre.name = stringMember(item, "value").value_or("");
+        genre.songCount = validated(intMember(item, "songCount"),
+                                    [](int value) { return value >= 0; }).value_or(0);
+        genre.albumCount = validated(intMember(item, "albumCount"),
+                                     [](int value) { return value >= 0; }).value_or(0);
+        return genre;
+    });
+}
+
 std::vector<navidrome::MusicFolder> navidrome::parseMusicFolderArrayJson(
         const std::string& json, const std::string& memberName) {
     return parseObjectMember<MusicFolder>(json, memberName, [](const std::string& item) {

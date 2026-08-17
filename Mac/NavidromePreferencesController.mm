@@ -9,6 +9,33 @@ namespace navidrome {
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;
     extern cfg_string cfg_custom_headers;
+    extern cfg_var_modern::cfg_bool cfg_scrobble;
+    extern cfg_string cfg_stream_format;
+    extern cfg_var_modern::cfg_int cfg_max_bitrate;
+}
+
+// Streaming transcode options. The stored value is what goes on the wire as
+// stream.view's `format` — "" leaves the decision to the server's own
+// transcoding rules, "raw" forces the original file.
+//
+// The server can only honour a format it has a transcoding configured for.
+// Navidrome ships mp3 / opus / aac; FLAC and WAV need a transcoding row added
+// in its admin UI first, and are mainly useful as lossless normalisation
+// targets for source codecs foobar2000 can't decode itself.
+static NSArray<NSArray *> *NavidromeStreamFormats(void) {
+    return @[ @[@"Server default", @""],
+              @[@"Original (no transcoding)", @"raw"],
+              @[@"MP3", @"mp3"],
+              @[@"Opus", @"opus"],
+              @[@"AAC", @"aac"],
+              @[@"FLAC (lossless)", @"flac"],
+              @[@"WAV (uncompressed)", @"wav"] ];
+}
+
+// kbps ceiling; 0 means "no limit", which is also what Subsonic reads when the
+// parameter is absent.
+static NSArray<NSNumber *> *NavidromeMaxBitrates(void) {
+    return @[ @0, @64, @96, @128, @192, @256, @320 ];
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +168,9 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
 @property (nonatomic, strong) NSTextField        *statusLabel;
 @property (nonatomic, strong) NSButton           *testButton;
 @property (nonatomic, strong) NSButton           *headersButton;
+@property (nonatomic, strong) NSButton           *scrobbleCheckbox;
+@property (nonatomic, strong) NSPopUpButton      *formatPopup;
+@property (nonatomic, strong) NSPopUpButton      *bitratePopup;
 @end
 
 @implementation NavidromePreferencesController
@@ -206,6 +236,47 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
                                         action:@selector(openCustomHeaders:)];
     _headersButton.translatesAutoresizingMaskIntoConstraints = NO;
     [root addSubview:_headersButton];
+
+    // Scrobbling toggle
+    _scrobbleCheckbox = [NSButton checkboxWithTitle:@"Report plays to Navidrome (scrobbling)"
+                                             target:self
+                                             action:@selector(scrobbleToggled:)];
+    _scrobbleCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
+    _scrobbleCheckbox.toolTip = @"Updates play counts and “Recently Played” on the "
+                                 "server, and feeds any Last.fm / ListenBrainz relay it has "
+                                 "configured.";
+    [root addSubview:_scrobbleCheckbox];
+
+    // Streaming transcode controls. Both are per-request stream.view params, so
+    // a change takes effect on the next track without reconnecting.
+    NSTextField *lFormat  = makeLabel(@"Stream as:");
+    NSTextField *lBitrate = makeLabel(@"Max bitrate:");
+
+    _formatPopup = [[NSPopUpButton alloc] init];
+    _formatPopup.translatesAutoresizingMaskIntoConstraints = NO;
+    for (NSArray *entry in NavidromeStreamFormats())
+        [_formatPopup addItemWithTitle:entry[0]];
+    _formatPopup.target = self;
+    _formatPopup.action = @selector(transcodeChanged:);
+    _formatPopup.toolTip = @"Ask the server to transcode on the fly. "
+                            "Useful on slow links; “Original” always sends the stored file. "
+                            "The server must have a transcoding configured for the chosen "
+                            "format — Navidrome ships MP3, Opus and AAC; FLAC and WAV have "
+                            "to be added in its admin UI.";
+    [root addSubview:_formatPopup];
+
+    _bitratePopup = [[NSPopUpButton alloc] init];
+    _bitratePopup.translatesAutoresizingMaskIntoConstraints = NO;
+    for (NSNumber *kbps in NavidromeMaxBitrates())
+        [_bitratePopup addItemWithTitle:kbps.integerValue == 0
+            ? @"Unlimited"
+            : [NSString stringWithFormat:@"%ld kbps", (long)kbps.integerValue]];
+    _bitratePopup.target = self;
+    _bitratePopup.action = @selector(transcodeChanged:);
+    _bitratePopup.toolTip = @"Upper bound the server may not exceed. "
+                             "Ignored when the stream isn't transcoded, and when the "
+                             "target format is lossless (FLAC / WAV).";
+    [root addSubview:_bitratePopup];
 
     // Status label
     _statusLabel = [NSTextField labelWithString:@""];
@@ -273,8 +344,28 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
         [_headersButton.topAnchor constraintEqualToAnchor:_testButton.bottomAnchor constant:vGap],
         [_headersButton.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad + labelW + 8],
 
+        // Scrobbling checkbox
+        [_scrobbleCheckbox.topAnchor constraintEqualToAnchor:_headersButton.bottomAnchor constant:vGap],
+        [_scrobbleCheckbox.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad + labelW + 8],
+
+        // Stream format row
+        [lFormat.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad],
+        [lFormat.widthAnchor constraintEqualToConstant:labelW],
+        [lFormat.centerYAnchor constraintEqualToAnchor:_formatPopup.centerYAnchor],
+
+        [_formatPopup.topAnchor constraintEqualToAnchor:_scrobbleCheckbox.bottomAnchor constant:vGap],
+        [_formatPopup.leadingAnchor constraintEqualToAnchor:lFormat.trailingAnchor constant:8],
+
+        // Max bitrate row
+        [lBitrate.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad],
+        [lBitrate.widthAnchor constraintEqualToConstant:labelW],
+        [lBitrate.centerYAnchor constraintEqualToAnchor:_bitratePopup.centerYAnchor],
+
+        [_bitratePopup.topAnchor constraintEqualToAnchor:_formatPopup.bottomAnchor constant:vGap],
+        [_bitratePopup.leadingAnchor constraintEqualToAnchor:lBitrate.trailingAnchor constant:8],
+
         // Info label
-        [infoLabel.topAnchor constraintEqualToAnchor:_headersButton.bottomAnchor constant:vGap * 2],
+        [infoLabel.topAnchor constraintEqualToAnchor:_bitratePopup.bottomAnchor constant:vGap * 2],
         [infoLabel.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:pad],
         [infoLabel.trailingAnchor constraintEqualToAnchor:root.trailingAnchor constant:-pad],
     ]];
@@ -310,6 +401,38 @@ static NavidromeHeadersEditor *gHeadersEditor = nil;
     _serverField.stringValue   = [NSString stringWithUTF8String:navidrome::cfg_server_url.get().c_str()];
     _usernameField.stringValue = [NSString stringWithUTF8String:navidrome::cfg_username.get().c_str()];
     _passwordField.stringValue = [NSString stringWithUTF8String:navidrome::cfg_password.get().c_str()];
+    _scrobbleCheckbox.state    = navidrome::cfg_scrobble.get() ? NSControlStateValueOn
+                                                               : NSControlStateValueOff;
+
+    NSString *format = [NSString stringWithUTF8String:navidrome::cfg_stream_format.get().c_str()];
+    NSArray<NSArray *> *formats = NavidromeStreamFormats();
+    NSInteger formatIndex = 0;
+    for (NSUInteger i = 0; i < formats.count; i++)
+        if ([formats[i][1] isEqualToString:format]) { formatIndex = (NSInteger)i; break; }
+    [_formatPopup selectItemAtIndex:formatIndex];
+
+    NSInteger bitrate = (NSInteger)navidrome::cfg_max_bitrate.get();
+    NSArray<NSNumber *> *rates = NavidromeMaxBitrates();
+    NSInteger bitrateIndex = 0;
+    for (NSUInteger i = 0; i < rates.count; i++)
+        if (rates[i].integerValue == bitrate) { bitrateIndex = (NSInteger)i; break; }
+    [_bitratePopup selectItemAtIndex:bitrateIndex];
+}
+
+- (IBAction)scrobbleToggled:(id)sender {
+    navidrome::cfg_scrobble.set(_scrobbleCheckbox.state == NSControlStateValueOn);
+}
+
+- (IBAction)transcodeChanged:(id)sender {
+    NSArray<NSArray *> *formats = NavidromeStreamFormats();
+    NSInteger fi = _formatPopup.indexOfSelectedItem;
+    if (fi >= 0 && fi < (NSInteger)formats.count)
+        navidrome::cfg_stream_format.set([formats[(NSUInteger)fi][1] UTF8String]);
+
+    NSArray<NSNumber *> *rates = NavidromeMaxBitrates();
+    NSInteger bi = _bitratePopup.indexOfSelectedItem;
+    if (bi >= 0 && bi < (NSInteger)rates.count)
+        navidrome::cfg_max_bitrate.set(rates[(NSUInteger)bi].integerValue);
 }
 
 - (void)fieldChanged:(NSNotification *)note {

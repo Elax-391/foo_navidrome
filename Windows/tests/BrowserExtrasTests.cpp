@@ -25,13 +25,16 @@ int main() {
     check(navidrome::formatSongLabel(labelSong, "Fallback") ==
           u8"★ 3. Track  [4/5 星]", "song label combines stable metadata");
     check(navidrome::isBrowserPlayable(navidrome::BrowserNodeKind::SmartList) &&
+          navidrome::isBrowserPlayable(navidrome::BrowserNodeKind::Genre) &&
           !navidrome::isBrowserPlayable(navidrome::BrowserNodeKind::NavigationGroup) &&
-          navidrome::isBrowserContainer(navidrome::BrowserNodeKind::ServerPlaylist),
+          navidrome::isBrowserContainer(navidrome::BrowserNodeKind::ServerPlaylist) &&
+          navidrome::isBrowserContainer(navidrome::BrowserNodeKind::Genre),
           "node action eligibility is type based");
     const auto navigation = navidrome::groupedNavigationDefaults();
     check(navigation.groups == std::vector<navidrome::NavigationGroupKind>({
               navidrome::NavigationGroupKind::SmartLists,
               navidrome::NavigationGroupKind::ServerPlaylists,
+              navidrome::NavigationGroupKind::Genres,
               navidrome::NavigationGroupKind::Artists}) &&
           navigation.smartLists.size() == 7 &&
           navigation.smartLists.front() == navidrome::SmartListKind::StarredSongs &&
@@ -44,6 +47,15 @@ int main() {
           navidrome::favoriteSmartListKind(navidrome::FavoriteKind::Artist) ==
               navidrome::SmartListKind::StarredArtists,
           "favorite mutations target the matching smart list");
+
+    navidrome::Song downloadSong;
+    downloadSong.track = 3;
+    downloadSong.artist = "A/B";
+    downloadSong.title = "Title?";
+    downloadSong.suffix = "flac";
+    check(navidrome::downloadFileName(downloadSong) ==
+          "03. A_B - Title_.flac",
+          "download names keep track order and sanitize reserved characters");
 
     navidrome::Song first;
     first.id = "a";

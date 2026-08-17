@@ -2,6 +2,7 @@
 // Pure C++ types shared between all platform implementations.
 // No ObjC, no Windows headers — safe to include anywhere.
 
+#include <cstddef>
 #include <string>
 #include <optional>
 #include <vector>
@@ -186,6 +187,79 @@ struct PlaylistWriteResult {
     bool restored = false;
     std::string error;
 };
+
+// A genre from getGenres.view. Subsonic calls the genre itself "value" in the
+// JSON response; the normalized model exposes it as name.
+struct Genre {
+    std::string name;
+    int songCount = 0;
+    int albumCount = 0;
+};
+
+// Repeated playlist mutation parameters are chunked to stay below common URL
+// limits and the Windows WinHTTP path buffer limit.
+constexpr std::size_t kPlaylistChunkSize = 50;
+
+inline std::string streamTranscodeParams(const std::string& format,
+                                         int maxBitRate) {
+    std::string out;
+    if (!format.empty()) out += "&format=" + format;
+    if (maxBitRate > 0) out += "&maxBitRate=" + std::to_string(maxBitRate);
+    return out;
+}
+
+inline std::string effectiveStreamSuffix(const std::string& format,
+                                         const std::string& trackSuffix) {
+    if (format.empty() || format == "raw") return trackSuffix;
+    return format;
+}
+
+inline std::string sanitizeFileName(const std::string& name) {
+    std::string out;
+    for (unsigned char c : name) {
+        switch (c) {
+            case '/': case '\\': case ':': case '*': case '?':
+            case '"': case '<': case '>': case '|':
+                out.push_back('_');
+                break;
+            default:
+                out.push_back(static_cast<char>(c < 0x20 ? ' ' : c));
+        }
+    }
+    while (!out.empty() && (out.back() == '.' || out.back() == ' ')) out.pop_back();
+    return out.empty() ? std::string("untitled") : out;
+}
+
+inline std::string trackIdFromURI(const std::string& uri) {
+    static const std::string prefix = "navidrome://track/";
+    if (uri.size() <= prefix.size() || uri.compare(0, prefix.size(), prefix) != 0)
+        return {};
+
+    std::string id = uri.substr(prefix.size());
+    const std::size_t query = id.find('?');
+    if (query != std::string::npos) id.erase(query);
+
+    std::string decoded;
+    for (std::size_t i = 0; i < id.size(); ++i) {
+        if (id[i] == '%' && i + 2 < id.size()) {
+            auto hex = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            const int hi = hex(id[i + 1]);
+            const int lo = hex(id[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                decoded.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        decoded.push_back(id[i]);
+    }
+    return decoded;
+}
 
 // Parse a multiline custom-headers blob (one "Name: Value" per line) into
 // trimmed, non-empty header lines suitable for HTTP request headers. Blank

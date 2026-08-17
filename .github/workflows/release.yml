@@ -232,16 +232,15 @@ jobs:
   # n8n holds the foobar2000.org login + does the actual upload; this step only
   # ships it the public release metadata (no credentials involved here).
   #
-  # The webhook sits behind a Cloudflare Tunnel + Access Service Token (see
-  # infra-foundations terraform/cloudflare/access-n8n-webhook.tf) - CF validates
-  # the CF-Access-Client-* headers at the edge before the request ever reaches
-  # n8n, and n8n's own Webhook node checks X-Webhook-Secret as a second,
-  # independent layer.
+  # Runs on the self-hosted homelab runner (github-runner LXC, infra-foundations
+  # github_runner role): the webhook URL resolves to the LAN NPM -> n8n, bypassing
+  # Cloudflare entirely. GitHub-hosted runners previously hit the CF edge, where
+  # bot challenge (cf-mitigated: challenge) + DNS/cert gaps blocked the POST.
   # --------------------------------------------------------------------------
   notify-n8n:
     needs: [release, merge-component]
     if: needs.release.outputs.released_version != ''
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, homelab]
     steps:
       - name: Notify n8n for foobar2000.org publish
         env:
@@ -249,20 +248,19 @@ jobs:
           VERSION: ${{ needs.release.outputs.released_version }}
           N8N_WEBHOOK_URL: ${{ secrets.N8N_FOOBAR_RELEASE_WEBHOOK_URL }}
           N8N_WEBHOOK_SECRET: ${{ secrets.N8N_FOOBAR_RELEASE_WEBHOOK_SECRET }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          if [ -z "$N8N_WEBHOOK_URL" ] || [ -z "$N8N_WEBHOOK_SECRET" ] || \
-             [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
-            echo "n8n/Cloudflare release secrets are not configured; skipping foobar2000.org notification."
-            exit 0
-          fi
           ASSET="foo_navidrome_${VERSION}.fb2k-component"
 
-          ASSET_URL=$(gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" --json assets \
-            --jq ".assets[] | select(.name==\"$ASSET\") | .url")
-          CHANGELOG=$(gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          # The homelab runner has no `gh` CLI - fetch release metadata via the API.
+          RELEASE_JSON=$(curl -sf \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/v${VERSION}")
+          ASSET_URL=$(printf '%s' "$RELEASE_JSON" | jq -r --arg name "$ASSET" \
+            '.assets[] | select(.name == $name) | .url')
+          CHANGELOG=$(printf '%s' "$RELEASE_JSON" | jq -r .body)
 
           # foobar2000.org's changelog field only supports plain "* item" bullet
           # lines (see /componentsadmin/help-changelog: "does not and will not
@@ -287,8 +285,6 @@ jobs:
           curl -sf -X POST "$N8N_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "X-Webhook-Secret: ${N8N_WEBHOOK_SECRET}" \
-            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
             -d "$(jq -n \
                   --arg version "$VERSION" \
                   --arg changelog "$CHANGELOG_CLEAN" \

@@ -16,6 +16,7 @@ enum class BrowserNodeKind {
     Artist,
     Album,
     Song,
+    Genre,
     SmartList,
     ServerPlaylist,
     Loading,
@@ -25,6 +26,7 @@ enum class BrowserNodeKind {
 enum class NavigationGroupKind {
     SmartLists,
     ServerPlaylists,
+    Genres,
     Artists,
 };
 
@@ -50,6 +52,12 @@ bool isBrowserContainer(BrowserNodeKind kind) noexcept;
 bool isBrowserPlayable(BrowserNodeKind kind) noexcept;
 std::string formatSongLabel(const Song& song, const std::string& fallbackTitle);
 std::string formatPlaylistLabel(const ServerPlaylist& playlist);
+std::string downloadFileName(const Song& song);
+
+enum class EnqueueDisposition {
+    Append,
+    ReplaceActive,
+};
 
 struct PlaylistUriMapping {
     std::vector<std::string> orderedSongIds;

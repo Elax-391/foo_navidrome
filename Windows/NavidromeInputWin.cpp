@@ -15,6 +15,10 @@
 #include <cstdlib>
 #include <cstring>
 
+namespace navidrome {
+extern cfg_string cfg_stream_format;
+}
+
 // ---------------------------------------------------------------------------
 // Windows input_singletrack handler for the navidrome://track/<id>?... scheme,
 // mirroring the macOS NavidromeInput.mm. On decode_initialize() it resolves the
@@ -69,7 +73,9 @@ public:
         // bytes from httpFile, not from the hint path.
         const char* hint = m_resolved_url.c_str();
         pfc::string8 hintBuf;
-        const std::string decoderSuffix = navidrome::effectiveCodec(m_song);
+        const std::string decoderSuffix = navidrome::effectiveStreamSuffix(
+            navidrome::cfg_stream_format.get().c_str(),
+            navidrome::effectiveCodec(m_song));
         if (httpFile.is_valid() && !decoderSuffix.empty()) {
             hintBuf << "track." << decoderSuffix.c_str();
             hint = hintBuf.c_str();

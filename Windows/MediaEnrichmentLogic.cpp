@@ -305,6 +305,7 @@ std::string buildEsLyricConfigJs(
            << "  username: \"" << jsEscape(username) << "\",\n"
            << "  token: \"" << md5Hex(password + salt) << "\",\n"
            << "  salt: \"" << jsEscape(salt) << "\",\n"
+           << "  componentVersion: \"" << jsEscape(componentVersion) << "\",\n"
            << "  headers: {";
     for (std::size_t index = 0; index < headers.size(); ++index) {
         if (index != 0) result << ", ";

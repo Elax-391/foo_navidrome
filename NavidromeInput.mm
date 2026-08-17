@@ -11,6 +11,7 @@
 
 namespace navidrome {
     extern cfg_string cfg_custom_headers;
+    extern cfg_string cfg_stream_format;
 }
 
 NSString *const NavidromeURIScheme = @"navidrome";
@@ -98,11 +99,15 @@ public:
 
         // Our own file has no audio extension in the URL, so give the decoder a
         // suffix-based hint (track.<suffix>) for codec selection; it still reads
-        // bytes from httpFile.
+        // bytes from httpFile. When a transcoding format is configured the
+        // server sends that codec, not the track's own — hinting the original
+        // suffix would pick the wrong decoder.
+        std::string effSuffix = navidrome::effectiveStreamSuffix(
+            navidrome::cfg_stream_format.get().c_str(), m_suffix.c_str());
         const char *hint = m_resolved_url.c_str();
         pfc::string8 hintBuf;
-        if (httpFile.is_valid() && !m_suffix.is_empty()) {
-            hintBuf << "track." << m_suffix;
+        if (httpFile.is_valid() && !effSuffix.empty()) {
+            hintBuf << "track." << effSuffix.c_str();
             hint = hintBuf.c_str();
         }
 

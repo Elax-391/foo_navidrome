@@ -43,6 +43,8 @@ std::vector<Album> parseAlbumArrayJson(const std::string& json,
 ServerPlaylist parsePlaylistJson(const std::string& json);
 std::vector<ServerPlaylist> parsePlaylistArrayJson(
     const std::string& json, const std::string& memberName = "playlist");
+std::vector<Genre> parseGenreArrayJson(
+    const std::string& json, const std::string& memberName = "genre");
 
 std::vector<MusicFolder> parseMusicFolderArrayJson(
     const std::string& json, const std::string& memberName = "musicFolder");

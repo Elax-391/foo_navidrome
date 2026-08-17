@@ -8,6 +8,7 @@ navidrome::GroupedNavigationDefaults navidrome::groupedNavigationDefaults() {
     return {
         {NavigationGroupKind::SmartLists,
          NavigationGroupKind::ServerPlaylists,
+         NavigationGroupKind::Genres,
          NavigationGroupKind::Artists},
         {SmartListKind::StarredSongs,
          SmartListKind::StarredAlbums,
@@ -29,13 +30,15 @@ navidrome::SmartListKind navidrome::favoriteSmartListKind(
 bool navidrome::isBrowserContainer(BrowserNodeKind kind) noexcept {
     return kind == BrowserNodeKind::NavigationGroup ||
            kind == BrowserNodeKind::Artist || kind == BrowserNodeKind::Album ||
+           kind == BrowserNodeKind::Genre ||
            kind == BrowserNodeKind::SmartList ||
            kind == BrowserNodeKind::ServerPlaylist;
 }
 
 bool navidrome::isBrowserPlayable(BrowserNodeKind kind) noexcept {
     return kind == BrowserNodeKind::Artist || kind == BrowserNodeKind::Album ||
-           kind == BrowserNodeKind::Song || kind == BrowserNodeKind::SmartList ||
+           kind == BrowserNodeKind::Song || kind == BrowserNodeKind::Genre ||
+           kind == BrowserNodeKind::SmartList ||
            kind == BrowserNodeKind::ServerPlaylist;
 }
 
@@ -52,6 +55,19 @@ std::string navidrome::formatSongLabel(const Song& song,
 
 std::string navidrome::formatPlaylistLabel(const ServerPlaylist& playlist) {
     return playlist.name + " (" + std::to_string(playlist.songCount) + u8" 首)";
+}
+
+std::string navidrome::downloadFileName(const Song& song) {
+    std::string name;
+    if (song.track > 0) {
+        if (song.track < 10) name += "0";
+        name += std::to_string(song.track) + ". ";
+    }
+    if (!song.artist.empty()) name += song.artist + " - ";
+    name += song.title.empty() ? "untitled" : song.title;
+    name = sanitizeFileName(name);
+    if (!song.suffix.empty()) name += "." + song.suffix;
+    return name;
 }
 
 navidrome::PlaylistUriMapping navidrome::mapActivePlaylistUris(

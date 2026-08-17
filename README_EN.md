@@ -6,17 +6,21 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 
 ## Installation (end users)
 
-1. Download `foo_navidrome_<version>.fb2k-component` from the [Releases](../../releases) page. It's a **single multi-platform component** — one file ships macOS, Windows x86, Windows x64, and native Windows-on-ARM (ARM64EC). foobar2000 picks the right binary at load time.
+1. Download `foo_navidrome_<version>.fb2k-component` from the [Releases](../../releases) page. Upstream release packages are **single multi-platform components**; this fork's routine release and validation target is Windows x64.
 2. Drag the file onto foobar2000, or double-click it — foobar2000 installs it automatically
 3. Restart foobar2000
 4. Go to **Preferences › Tools › Navidrome** and enter your server URL and credentials
 
 ## Features
 
-- Browse your entire music library: Artists → Albums → Songs
+- Browse your entire music library by artists, albums, songs, genres, and smart lists
+- Browse server playlists, upload the active foobar2000 playlist, and rename or delete server playlists
+- Download original audio files from any selected song or container
+- Choose the stream format and maximum transcoding bitrate
 - Add albums or artists to playlist in one click (loads all songs automatically)
 - Right-click any row for a **Play Now / Add to Playlist** context menu
 - Double-click a song to play immediately
+- Press Enter to replace the active playlist with the selection and start playback
 - Search across artists, albums and songs
 - Album artwork displayed in Now Playing and playlists (fetched from Navidrome)
 - Credentials saved in foobar2000's config (persistent across restarts)
@@ -28,11 +32,15 @@ A [foobar2000](https://www.foobar2000.org/) component that lets you browse and s
 
 | Platform | Status |
 |----------|--------|
-| macOS         | ✅ Supported — shipped (Xcode, foobar2000 v2 for Mac) |
-| Windows x64   | ✅ Supported — runtime-verified on native foobar2000 for Windows (Visual Studio 2022, or cross-compiled on Linux) |
-| Windows x86   | ✅ Supported — same build, 32-bit binary shipped in the component |
-| Windows ARM64 | ✅ Supported — native ARM64EC binary, runtime-verified |
+| macOS         | ✅ Available in the upstream multi-platform pipeline |
+| Windows x64   | ✅ Supported and routinely validated by this fork |
+| Windows x86   | ⚙️ Packaged by the upstream CI matrix |
+| Windows ARM64 | ⚙️ Packaged as native ARM64EC by the upstream CI matrix |
 | Linux         | ⚙️ Runs under Wine — loads the Windows x64 build |
+
+> This fork is routinely maintained and validated on Windows x64. The other
+> targets remain available through the upstream multi-platform build and release
+> pipeline.
 
 > A single `.fb2k-component` ships every platform: macOS bundle, Windows x86, x64,
 > and a native ARM64EC binary; foobar2000 selects the right one at load. The Windows
@@ -102,7 +110,9 @@ If you prefer Xcode directly:
 1. Open **Preferences › Tools › Navidrome**
 2. Enter your server URL (e.g. `http://navidrome.local:4533/`)
 3. Enter your username and password
-4. Click **Test Connection** — you should see "Connected!"
+4. Add custom HTTP headers if your reverse proxy requires them
+5. Optionally choose a stream format and maximum bitrate; choose **Raw** to disable transcoding
+6. Click **Test Connection** — you should see "Connected!"
 
 ### Usage
 
@@ -111,8 +121,10 @@ Two ways to open the browser:
 - **Preferences › Media Library › Library viewers › Navidrome › Activate**
 
 Then:
-- Expand an artist to see albums, expand an album to see songs
+- Expand artists, genres, smart lists, or server playlists to browse their songs
 - Select one or more items and click **Add to Playlist** or **Play Now**
+- Right-click a selection to download original files or manage a server playlist
+- Press Enter to replace the active playlist with the selection and start playback
 - Double-click a song to play it immediately
 - Use the search field to search across your library
 

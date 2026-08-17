@@ -57,6 +57,12 @@ public:
                                     std::string& outError);
     StarredResults getStarred(const SubsonicRequestContext& context,
                               std::string& outError);
+    std::vector<Genre> getGenres(const SubsonicRequestContext& context,
+                                 std::string& outError);
+    std::vector<Song> getSongsForGenre(const SubsonicRequestContext& context,
+                                       const std::string& genre,
+                                       std::size_t count,
+                                       std::string& outError);
     bool setFavorite(const SubsonicRequestContext& context, FavoriteKind kind,
                      const std::string& id, bool favorite,
                      std::string& outError);
@@ -80,10 +86,19 @@ public:
         const std::vector<std::size_t>& songIndicesToRemove,
         bool formPostAdvertised,
         std::string& outError);
+    bool renamePlaylist(const SubsonicRequestContext& context,
+                        const std::string& playlistId,
+                        const std::string& name,
+                        std::string& outError);
+    bool deletePlaylist(const SubsonicRequestContext& context,
+                        const std::string& playlistId,
+                        std::string& outError);
     bool scrobble(const SubsonicRequestContext& context, const std::string& songId,
                   bool submission, std::string& outError);
 
     std::string streamURL(const std::string& songId);
+    std::string downloadURL(const SubsonicRequestContext& context,
+                            const std::string& songId) const;
     std::string coverArtURL(const std::string& id, int size = 0);
     std::string coverArtURL(const SubsonicRequestContext& context,
                             const std::string& id, int size = 0) const;
@@ -110,6 +125,10 @@ public:
                                     const std::string& url,
                                     std::size_t maxBytes,
                                     class abort_callback& abort) const;
+    bool httpDownloadToFile(const SubsonicRequestContext& context,
+                            const std::string& url,
+                            const std::wstring& destPath,
+                            std::string& outError) const;
 
 private:
     SubsonicClientWin() = default;

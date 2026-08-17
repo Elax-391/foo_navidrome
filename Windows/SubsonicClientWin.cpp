@@ -17,6 +17,8 @@ namespace navidrome {
     extern cfg_string cfg_password;
     extern cfg_string cfg_salt;
     extern cfg_string cfg_custom_headers;
+    extern cfg_string cfg_stream_format;
+    extern cfg_var_modern::cfg_int cfg_max_bitrate;
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +516,34 @@ navidrome::StarredResults navidrome::SubsonicClientWin::getStarred(
     return results;
 }
 
+std::vector<navidrome::Genre> navidrome::SubsonicClientWin::getGenres(
+        const SubsonicRequestContext& context, std::string& outError) {
+    const auto body = request(context, "getGenres.view", {},
+                              RequestMethod::Get, outError);
+    if (body.empty()) return {};
+    const auto root = checkedResponse(body, outError);
+    if (root.empty()) return {};
+    auto genres = parseGenreArrayJson(root);
+    genres.erase(std::remove_if(genres.begin(), genres.end(), [](const Genre& genre) {
+        return genre.name.empty();
+    }), genres.end());
+    return genres;
+}
+
+std::vector<navidrome::Song> navidrome::SubsonicClientWin::getSongsForGenre(
+        const SubsonicRequestContext& context, const std::string& genre,
+        std::size_t count, std::string& outError) {
+    if (genre.empty()) return {};
+    const auto body = request(context, "getSongsByGenre.view",
+                              {{"genre", genre}, {"count", std::to_string(count)}},
+                              RequestMethod::Get, outError);
+    if (body.empty()) return {};
+    const auto root = checkedResponse(body, outError);
+    return root.empty()
+        ? std::vector<Song>()
+        : parseSongArrayJson(root, "song", {}, navidrome::l10n::unknownTitle);
+}
+
 bool navidrome::SubsonicClientWin::setFavorite(
         const SubsonicRequestContext& context, FavoriteKind kind,
         const std::string& id, bool favorite, std::string& outError) {
@@ -711,6 +741,25 @@ navidrome::PlaylistWriteResult navidrome::SubsonicClientWin::updatePlaylist(
     return result;
 }
 
+bool navidrome::SubsonicClientWin::renamePlaylist(
+        const SubsonicRequestContext& context, const std::string& playlistId,
+        const std::string& name, std::string& outError) {
+    if (playlistId.empty() || name.empty()) return false;
+    const auto body = request(context, "updatePlaylist.view",
+                              {{"playlistId", playlistId}, {"name", name}},
+                              RequestMethod::Get, outError);
+    return !body.empty() && !checkedResponse(body, outError).empty();
+}
+
+bool navidrome::SubsonicClientWin::deletePlaylist(
+        const SubsonicRequestContext& context, const std::string& playlistId,
+        std::string& outError) {
+    if (playlistId.empty()) return false;
+    const auto body = request(context, "deletePlaylist.view", {{"id", playlistId}},
+                              RequestMethod::Get, outError);
+    return !body.empty() && !checkedResponse(body, outError).empty();
+}
+
 bool navidrome::SubsonicClientWin::scrobble(
         const SubsonicRequestContext& context, const std::string& songId,
         bool submission, std::string& outError) {
@@ -731,7 +780,14 @@ bool navidrome::SubsonicClientWin::scrobble(
 
 std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
     auto context = snapshot();
-    return buildURL(context, "stream.view", {{"id", songId}});
+    return buildURL(context, "stream.view", {{"id", songId}}) +
+        streamTranscodeParams(cfg_stream_format.get().c_str(),
+                              static_cast<int>(cfg_max_bitrate.get()));
+}
+
+std::string navidrome::SubsonicClientWin::downloadURL(
+        const SubsonicRequestContext& context, const std::string& songId) const {
+    return buildURL(context, "download.view", {{"id", songId}});
 }
 
 std::string navidrome::SubsonicClientWin::coverArtURL(const std::string& id, int size) {
@@ -743,6 +799,122 @@ std::string navidrome::SubsonicClientWin::coverArtURL(
         const SubsonicRequestContext& context, const std::string& id, int size) const {
     return buildCoverArtUrl(context.serverUrl, context.username, context.password,
         context.salt, id, size);
+}
+
+bool navidrome::SubsonicClientWin::httpDownloadToFile(
+        const SubsonicRequestContext& context, const std::string& urlStr,
+        const std::wstring& destPath, std::string& outError) const {
+    const std::wstring url = toWide(urlStr);
+    URL_COMPONENTS components = {};
+    components.dwStructSize = sizeof(components);
+    wchar_t host[256] = {};
+    wchar_t path[4096] = {};
+    wchar_t extra[4096] = {};
+    components.lpszHostName = host;
+    components.dwHostNameLength = 256;
+    components.lpszUrlPath = path;
+    components.dwUrlPathLength = 4096;
+    components.lpszExtraInfo = extra;
+    components.dwExtraInfoLength = 4096;
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components)) {
+        outError = navidrome::l10n::invalidUrl;
+        return false;
+    }
+
+    HINTERNET session = WinHttpOpen(L"foo_navidrome/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+        outError = navidrome::l10n::winHttpOpenFailed;
+        return false;
+    }
+    WinHttpSetTimeouts(session, 0, 15000, 15000, 300000);
+    applySecureProtocols(session);
+
+    HINTERNET connection = WinHttpConnect(session, host, components.nPort, 0);
+    if (!connection) {
+        WinHttpCloseHandle(session);
+        outError = navidrome::l10n::connectFailed;
+        return false;
+    }
+
+    std::wstring requestPath(path);
+    requestPath += extra;
+    const DWORD flags = components.nScheme == INTERNET_SCHEME_HTTPS
+        ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET requestHandle = WinHttpOpenRequest(connection, L"GET",
+        requestPath.c_str(), nullptr, WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!requestHandle) {
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        outError = navidrome::l10n::requestError(GetLastError());
+        return false;
+    }
+
+    std::string joined;
+    for (const auto& line : navidrome::parseHeaderLines(context.customHeaders)) {
+        if (!joined.empty()) joined += "\r\n";
+        joined += line;
+    }
+    const std::wstring headers = joined.empty() ? std::wstring() : toWide(joined);
+    if (!headers.empty()) {
+        WinHttpAddRequestHeaders(requestHandle, headers.c_str(), (DWORD)-1,
+            WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    }
+
+    bool success = false;
+    if (WinHttpSendRequest(requestHandle, nullptr, 0, nullptr, 0, 0, 0) &&
+        WinHttpReceiveResponse(requestHandle, nullptr)) {
+        DWORD status = 0;
+        DWORD size = sizeof(status);
+        WinHttpQueryHeaders(requestHandle,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            nullptr, &status, &size, nullptr);
+        if (status != 200) {
+            outError = navidrome::l10n::httpError(status);
+        } else {
+            HANDLE file = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                                      CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file == INVALID_HANDLE_VALUE) {
+                outError = navidrome::l10n::fileCreateError(GetLastError());
+            } else {
+                success = true;
+                for (;;) {
+                    DWORD available = 0;
+                    if (!WinHttpQueryDataAvailable(requestHandle, &available)) {
+                        outError = navidrome::l10n::requestError(GetLastError());
+                        success = false;
+                        break;
+                    }
+                    if (available == 0) break;
+                    std::vector<char> buffer(available);
+                    DWORD read = 0;
+                    if (!WinHttpReadData(requestHandle, buffer.data(), available, &read)) {
+                        outError = navidrome::l10n::requestError(GetLastError());
+                        success = false;
+                        break;
+                    }
+                    DWORD written = 0;
+                    if (!WriteFile(file, buffer.data(), read, &written, nullptr) ||
+                        written != read) {
+                        outError = navidrome::l10n::fileWriteError(GetLastError());
+                        success = false;
+                        break;
+                    }
+                }
+                CloseHandle(file);
+                if (!success) DeleteFileW(destPath.c_str());
+            }
+        }
+    } else {
+        outError = navidrome::l10n::requestError(GetLastError());
+    }
+
+    WinHttpCloseHandle(requestHandle);
+    WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    return success;
 }
 
 // ---------------------------------------------------------------------------

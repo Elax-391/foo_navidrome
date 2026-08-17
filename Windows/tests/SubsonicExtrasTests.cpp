@@ -77,6 +77,26 @@ int main() {
           playlists[0].isPublic == true && playlists[0].coverArtId == "pl-p1",
           "playlist object and optional fields parse");
 
+    const auto genres = navidrome::parseGenreArrayJson(R"json({
+        "genres":{"genre":[
+          {"value":"Rock","songCount":12,"albumCount":3},
+          {"value":"","songCount":-1,"albumCount":-2}
+        ]}})json");
+    check(genres.size() == 2 && genres[0].name == "Rock" &&
+          genres[0].songCount == 12 && genres[0].albumCount == 3 &&
+          genres[1].songCount == 0 && genres[1].albumCount == 0,
+          "genre parsing normalizes Subsonic value and validates counts");
+
+    check(navidrome::streamTranscodeParams("opus", 192) ==
+              "&format=opus&maxBitRate=192" &&
+          navidrome::streamTranscodeParams("", 0).empty() &&
+          navidrome::effectiveStreamSuffix("raw", "flac") == "flac" &&
+          navidrome::effectiveStreamSuffix("mp3", "flac") == "mp3",
+          "stream preferences build parameters and decoder suffixes consistently");
+    check(navidrome::sanitizeFileName("A/B: C?. ") == "A_B_ C_" &&
+          navidrome::trackIdFromURI("navidrome://track/a%2Fb?title=x") == "a/b",
+          "shared download and URI helpers sanitize and decode stable values");
+
     const auto extensions = navidrome::parseOpenSubsonicExtensionsJson(R"json({
         "openSubsonicExtensions":{"openSubsonicExtension":[
           {"name":"formPost","versions":[1,2]},

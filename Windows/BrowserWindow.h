@@ -23,6 +23,8 @@
 #define WM_NAVIDROME_MUTATION_COMPLETE (WM_USER + 107)
 #define WM_NAVIDROME_PLAYLIST_CATALOG (WM_USER + 108)
 #define WM_NAVIDROME_PLAYLIST_COMPLETE (WM_USER + 109)
+#define WM_NAVIDROME_DOWNLOAD_COMPLETE (WM_USER + 110)
+#define WM_NAVIDROME_SERVER_PLAYLIST_COMPLETE (WM_USER + 111)
 
 // ---------------------------------------------------------------------------
 // Tree node
@@ -33,6 +35,7 @@ struct NavidromeNode {
     static constexpr Type Artist = Type::Artist;
     static constexpr Type Album = Type::Album;
     static constexpr Type Song = Type::Song;
+    static constexpr Type Genre = Type::Genre;
     static constexpr Type SmartList = Type::SmartList;
     static constexpr Type ServerPlaylist = Type::ServerPlaylist;
     static constexpr Type Loading = Type::Loading;
@@ -94,6 +97,8 @@ struct QueueCompletePayload {
     bool cancelled = false;
     bool play = false;
     bool closeAfter = false;
+    navidrome::EnqueueDisposition disposition =
+        navidrome::EnqueueDisposition::Append;
 };
 
 struct LibraryProgressPayload {
@@ -148,6 +153,23 @@ struct PlaylistAppendReceipt {
     bool success = false;
 };
 
+struct DownloadCompletePayload {
+    std::uint64_t operationId = 0;
+    std::size_t succeeded = 0;
+    std::size_t failed = 0;
+};
+
+struct ServerPlaylistCompletePayload {
+    enum class Action { Rename, Delete };
+    std::uint64_t operationId = 0;
+    std::string identity;
+    Action action = Action::Rename;
+    std::string playlistId;
+    std::string name;
+    bool success = false;
+    std::string error;
+};
+
 // ---------------------------------------------------------------------------
 // BrowserWindow
 // ---------------------------------------------------------------------------
@@ -175,6 +197,8 @@ public:
         MESSAGE_HANDLER(WM_NAVIDROME_MUTATION_COMPLETE, OnMutationComplete)
         MESSAGE_HANDLER(WM_NAVIDROME_PLAYLIST_CATALOG, OnPlaylistCatalog)
         MESSAGE_HANDLER(WM_NAVIDROME_PLAYLIST_COMPLETE, OnPlaylistComplete)
+        MESSAGE_HANDLER(WM_NAVIDROME_DOWNLOAD_COMPLETE, OnDownloadComplete)
+        MESSAGE_HANDLER(WM_NAVIDROME_SERVER_PLAYLIST_COMPLETE, OnServerPlaylistComplete)
         NOTIFY_CODE_HANDLER_EX(TVN_ITEMEXPANDING, OnTreeExpanding)
         NOTIFY_CODE_HANDLER_EX(NM_DBLCLK,        OnTreeDblClick)
         NOTIFY_CODE_HANDLER_EX(NM_RETURN,        OnTreeReturn)
@@ -186,6 +210,9 @@ public:
         COMMAND_ID_HANDLER_EX(IDC_REFRESH, OnRefresh)
         COMMAND_ID_HANDLER_EX(IDC_FAVORITE, OnFavorite)
         COMMAND_ID_HANDLER_EX(IDC_UPLOAD_PLAYLIST, OnUploadActivePlaylist)
+        COMMAND_ID_HANDLER_EX(IDC_DOWNLOAD_ORIGINAL, OnDownloadOriginal)
+        COMMAND_ID_HANDLER_EX(IDC_RENAME_SERVER_PLAYLIST, OnRenameServerPlaylist)
+        COMMAND_ID_HANDLER_EX(IDC_DELETE_SERVER_PLAYLIST, OnDeleteServerPlaylist)
         COMMAND_RANGE_HANDLER_EX(IDC_RATE_0, IDC_RATE_5, OnRate)
         COMMAND_HANDLER_EX(IDC_SEARCH, EN_CHANGE, OnSearchChanged)
     END_MSG_MAP()
@@ -204,6 +231,9 @@ private:
         IDC_UPLOAD_PLAYLIST=1010,
         IDC_RATE_0=1011,
         IDC_RATE_5=1016,
+        IDC_DOWNLOAD_ORIGINAL=1017,
+        IDC_RENAME_SERVER_PLAYLIST=1018,
+        IDC_DELETE_SERVER_PLAYLIST=1019,
     };
 
     LRESULT OnCreate(LPCREATESTRUCT);
@@ -219,6 +249,8 @@ private:
     LRESULT OnMutationComplete(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnPlaylistCatalog(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnPlaylistComplete(UINT, WPARAM, LPARAM, BOOL&);
+    LRESULT OnDownloadComplete(UINT, WPARAM, LPARAM, BOOL&);
+    LRESULT OnServerPlaylistComplete(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnTreeExpanding(LPNMHDR);
     LRESULT OnTreeDblClick(LPNMHDR);
     LRESULT OnTreeReturn(LPNMHDR);
@@ -231,6 +263,9 @@ private:
     void    OnFavorite(UINT, int, HWND);
     void    OnRate(UINT, int, HWND);
     void    OnUploadActivePlaylist(UINT, int, HWND);
+    void    OnDownloadOriginal(UINT, int, HWND);
+    void    OnRenameServerPlaylist(UINT, int, HWND);
+    void    OnDeleteServerPlaylist(UINT, int, HWND);
     void    OnSearchChanged(UINT, int, HWND);
 
     void    loadArtists();
@@ -258,6 +293,8 @@ private:
         const navidrome::Album& album);
     static std::shared_ptr<NavidromeNode> makeSongNode(
         const navidrome::Song& song);
+    static std::shared_ptr<NavidromeNode> makeGenreNode(
+        const navidrome::Genre& genre);
     static std::shared_ptr<NavidromeNode> makePlaylistNode(
         const navidrome::ServerPlaylist& playlist);
     static std::vector<std::shared_ptr<NavidromeNode>> fetchChildren(
@@ -271,12 +308,18 @@ private:
         const std::shared_ptr<std::atomic_bool>& cancel,
         const navidrome::SubsonicRequestContext& context);
     PlaylistAppendReceipt enqueueNodes(
-        std::vector<std::shared_ptr<NavidromeNode>> songs, bool play);
+        std::vector<std::shared_ptr<NavidromeNode>> songs, bool play,
+        navidrome::EnqueueDisposition disposition =
+            navidrome::EnqueueDisposition::Append);
     bool rollbackAppend(const PlaylistAppendReceipt& receipt);
     std::vector<std::shared_ptr<NavidromeNode>> selectedNodes();
-    void    queueSelected(bool play, bool closeAfter);
+    void    queueSelected(bool play, bool closeAfter,
+                          navidrome::EnqueueDisposition disposition =
+                              navidrome::EnqueueDisposition::Append);
     void    queueNodes(std::vector<std::shared_ptr<NavidromeNode>> roots,
-                       bool play, bool closeAfter, bool reportRootProgress);
+                       bool play, bool closeAfter, bool reportRootProgress,
+                       navidrome::EnqueueDisposition disposition =
+                           navidrome::EnqueueDisposition::Append);
     void    importLibrary(bool forceFull);
     void    startMutation(const std::shared_ptr<NavidromeNode>& node,
                           navidrome::BrowserMutationKind kind,
@@ -320,6 +363,8 @@ private:
     std::uint64_t m_queueOperationId = 0;
     std::uint64_t m_mutationOperationId = 0;
     std::uint64_t m_playlistOperationId = 0;
+    std::uint64_t m_downloadOperationId = 0;
+    std::uint64_t m_playlistMutationOperationId = 0;
     std::string   m_searchQuery;
     std::string   m_mutationIdentity;
     navidrome::BrowserMutationSubscription m_mutationSubscription;
@@ -329,4 +374,6 @@ private:
     bool          m_queueInProgress = false;
     bool          m_mutationInProgress = false;
     bool          m_playlistInProgress = false;
+    bool          m_downloadInProgress = false;
+    bool          m_playlistMutationInProgress = false;
 };
