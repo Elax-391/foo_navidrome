@@ -102,7 +102,7 @@ verify_universal_bundle() {
         if file "$candidate" | grep -q 'Mach-O'; then
             macho_count=$((macho_count + 1))
             echo "ci-build: verifying slices for $candidate: $(lipo -archs "$candidate")"
-            lipo -verify_arch arm64 x86_64 "$candidate"
+            lipo "$candidate" -verify_arch arm64 x86_64
         fi
     done < <(find "$bundle" -type f -print0)
     if [ "$macho_count" -eq 0 ]; then
