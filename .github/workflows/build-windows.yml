@@ -250,7 +250,8 @@ jobs:
             param(
               [Parameter(Mandatory = $true)][string]$Path,
               [Parameter(Mandatory = $true)][UInt16]$Expected,
-              [Parameter(Mandatory = $true)][string]$Platform
+              [Parameter(Mandatory = $true)][string]$Platform,
+              [bool]$RequireArm64Ec = $false
             )
             $stream = [System.IO.File]::OpenRead($Path)
             $reader = [System.IO.BinaryReader]::new($stream)
@@ -262,12 +263,63 @@ jobs:
               $stream.Position = $peOffset
               if ($reader.ReadUInt32() -ne 0x00004550) { throw "$Platform output has an invalid PE signature: $Path" }
               $actual = $reader.ReadUInt16()
+
+              if ($actual -ne $Expected) {
+                throw ("{0} PE machine mismatch: expected 0x{1:X4}, got 0x{2:X4}" -f $Platform, $Expected, $actual)
+              }
+
+              if ($RequireArm64Ec) {
+                # Linked ARM64EC images use the AMD64 machine value so existing
+                # x64 loaders accept them. A non-zero CHPEMetadataPointer in the
+                # PE32+ load-config directory distinguishes the hybrid image.
+                $stream.Position = $peOffset + 6
+                $sectionCount = $reader.ReadUInt16()
+                $stream.Position = $peOffset + 20
+                $optionalHeaderSize = $reader.ReadUInt16()
+                $optionalHeaderOffset = $peOffset + 24
+                $stream.Position = $optionalHeaderOffset
+                if ($reader.ReadUInt16() -ne 0x020B) { throw "$Platform output is not PE32+: $Path" }
+
+                $loadConfigEntryOffset = $optionalHeaderOffset + 112 + (10 * 8)
+                if ($loadConfigEntryOffset + 8 -gt $optionalHeaderOffset + $optionalHeaderSize) {
+                  throw "$Platform output has no load-config data directory: $Path"
+                }
+                $stream.Position = $loadConfigEntryOffset
+                $loadConfigRva = $reader.ReadUInt32()
+                $loadConfigSize = $reader.ReadUInt32()
+                if ($loadConfigRva -eq 0 -or $loadConfigSize -lt 208) {
+                  throw "$Platform output has no ARM64EC load-config metadata: $Path"
+                }
+
+                $sectionTableOffset = $optionalHeaderOffset + $optionalHeaderSize
+                $loadConfigFileOffset = $null
+                for ($index = 0; $index -lt $sectionCount; $index++) {
+                  $sectionOffset = $sectionTableOffset + ($index * 40)
+                  $stream.Position = $sectionOffset + 8
+                  $virtualSize = $reader.ReadUInt32()
+                  $virtualAddress = $reader.ReadUInt32()
+                  $rawSize = $reader.ReadUInt32()
+                  $rawOffset = $reader.ReadUInt32()
+                  $mappedSize = [Math]::Max([UInt64]$virtualSize, [UInt64]$rawSize)
+                  if ([UInt64]$loadConfigRva -ge [UInt64]$virtualAddress -and
+                      [UInt64]$loadConfigRva -lt ([UInt64]$virtualAddress + $mappedSize)) {
+                    $loadConfigFileOffset = [UInt64]$rawOffset + ([UInt64]$loadConfigRva - [UInt64]$virtualAddress)
+                    break
+                  }
+                }
+                if ($null -eq $loadConfigFileOffset -or $loadConfigFileOffset + 208 -gt [UInt64]$stream.Length) {
+                  throw "$Platform load-config RVA cannot be mapped to the file: $Path"
+                }
+                $stream.Position = [Int64]$loadConfigFileOffset + 200
+                $chpeMetadataPointer = $reader.ReadUInt64()
+                if ($chpeMetadataPointer -eq 0) {
+                  throw "$Platform output has a zero CHPEMetadataPointer and is not ARM64EC: $Path"
+                }
+                Write-Host ("verified ARM64EC CHPE metadata pointer 0x{0:X}: {1}" -f $chpeMetadataPointer, $Path)
+              }
             } finally {
               $reader.Dispose()
               $stream.Dispose()
-            }
-            if ($actual -ne $Expected) {
-              throw ("{0} PE machine mismatch: expected 0x{1:X4}, got 0x{2:X4}" -f $Platform, $Expected, $actual)
             }
             Write-Host ("verified {0} PE machine 0x{1:X4}: {2}" -f $Platform, $actual, $Path)
           }
@@ -275,7 +327,7 @@ jobs:
           $targets = @(
             @{ Platform = 'Win32';   ZipSub = '';        Machine = [UInt16]0x014C },
             @{ Platform = 'x64';     ZipSub = 'x64';     Machine = [UInt16]0x8664 },
-            @{ Platform = 'ARM64EC'; ZipSub = 'arm64ec'; Machine = [UInt16]0xA641 }
+            @{ Platform = 'ARM64EC'; ZipSub = 'arm64ec'; Machine = [UInt16]0x8664; Arm64Ec = $true }
           )
           foreach ($target in $targets) {
             $platform = $target.Platform
@@ -299,7 +351,8 @@ jobs:
             }
             $dll = "$out\foo_navidrome.dll"
             if (-not (Test-Path -LiteralPath $dll)) { Write-Error "foo_navidrome.dll not found for $platform at $dll"; exit 1 }
-            Assert-PeMachine -Path $dll -Expected $target.Machine -Platform $platform
+            Assert-PeMachine -Path $dll -Expected $target.Machine -Platform $platform `
+              -RequireArm64Ec:([bool]$target.Arm64Ec)
             $destDir = if ($target.ZipSub) { "$dist\$($target.ZipSub)" } else { $dist }
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
             Copy-Item -LiteralPath $dll -Destination "$destDir\foo_navidrome.dll" -Force
