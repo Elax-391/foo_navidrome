@@ -1,3 +1,31 @@
+## [1.2.0](https://github.com/Elax-391/foo_navidrome/compare/v1.1.1...v1.2.0) (2026-08-18)
+
+
+### Features
+
+* add scrobbling, smart lists, favorites/ratings and server playlists ([c52446c](https://github.com/Elax-391/foo_navidrome/commit/c52446ca5463d852a41bc5ef7deb3dd87e7d3638))
+* add support to ESLync for Windows ([ef5c7aa](https://github.com/Elax-391/foo_navidrome/commit/ef5c7aa3011c47084cfab7c243f58b16c99927c8))
+* browse the library by genre ([63cb4f7](https://github.com/Elax-391/foo_navidrome/commit/63cb4f7fc171253addf461c5ef2e8c536f280841))
+* download original files from the browser ([b879a30](https://github.com/Elax-391/foo_navidrome/commit/b879a30962f1893faa27507f2690c406b2159f94))
+* integrate upstream v1.6.1 and automatic multi-route failover ([#1](https://github.com/Elax-391/foo_navidrome/issues/1)) ([46e71ea](https://github.com/Elax-391/foo_navidrome/commit/46e71eaac1805924b994df7cc720f554f8d0e267))
+* manage server playlists from the browser ([8224da6](https://github.com/Elax-391/foo_navidrome/commit/8224da63861efb84d64215b5c82dcaaf02699d18))
+* pick the streaming format and bitrate ([2c44673](https://github.com/Elax-391/foo_navidrome/commit/2c446732acdd45e6c1f7a8bedb6f3379c4dda3da))
+* **windows:** add multi-route automatic failover ([6cc2639](https://github.com/Elax-391/foo_navidrome/commit/6cc26398f3445b034db2b29308d5688d22f278a3))
+* **windows:** add robust scrobble lifecycle ([24617db](https://github.com/Elax-391/foo_navidrome/commit/24617dbced3da149bc73f1ff974a6fc21a0748c3))
+* **windows:** add robust Subsonic extras API ([90cba62](https://github.com/Elax-391/foo_navidrome/commit/90cba62132d43cf3ab5a4a994ce28c2f3857b55f))
+* **windows:** integrate browser playlist extras ([5b53fa6](https://github.com/Elax-391/foo_navidrome/commit/5b53fa66a8c3bc6c525f97f9edd42cd54195cb5c))
+
+
+### Bug Fixes
+
+* **build:** resolve the SDK tree in dev-build.sh and stop hiding xcodebuild errors ([11db278](https://github.com/Elax-391/foo_navidrome/commit/11db27852922f9f0dfa0d33ff9f82eb527a878e1))
+* carry the track's codec suffix in navidrome:// URIs on macOS ([6d2065c](https://github.com/Elax-391/foo_navidrome/commit/6d2065c30e7ac9113b0e27ec8787c6533900e3e9))
+* **ci:** detect ARM64EC hybrid metadata ([8807901](https://github.com/Elax-391/foo_navidrome/commit/88079015f458c6a38efbcbc5918698776ccad30b))
+* **ci:** validate universal Mach-O slices correctly ([f2c0057](https://github.com/Elax-391/foo_navidrome/commit/f2c0057a27dadd5b7e16a80b68e5acacae43463a))
+* enter action to clear current playlist ([22e91f1](https://github.com/Elax-391/foo_navidrome/commit/22e91f1152fdd7f9dd38db172253674260ef405c))
+* publish releases to foobar2000.org from self-hosted runner ([ece28b7](https://github.com/Elax-391/foo_navidrome/commit/ece28b7d34365489997d51663fa01561746ef0c1))
+* **release:** restore fork version lineage ([4f61a42](https://github.com/Elax-391/foo_navidrome/commit/4f61a4233cf212584d658972175a5c3df8f01546))
+
 <!-- Sections whose links point to santiagorod92/foo_navidrome are imported
      upstream release notes. Their version numbers are not releases or tags of
      the Elax-391 fork. -->
