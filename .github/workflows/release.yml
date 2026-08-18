@@ -252,10 +252,14 @@ jobs:
   # github_runner role): the webhook URL resolves to the LAN NPM -> n8n, bypassing
   # Cloudflare entirely. GitHub-hosted runners previously hit the CF edge, where
   # bot challenge (cf-mitigated: challenge) + DNS/cert gaps blocked the POST.
+  # The fork has no self-hosted runner by default, so this integration is
+  # explicitly opt-in through the repository variable ENABLE_N8N_RELEASE_NOTIFY.
   # --------------------------------------------------------------------------
   notify-n8n:
     needs: [release, merge-component]
-    if: needs.release.outputs.released_version != ''
+    if: >-
+      needs.release.outputs.released_version != '' &&
+      vars.ENABLE_N8N_RELEASE_NOTIFY == 'true'
     runs-on: [self-hosted, homelab]
     steps:
       - name: Notify n8n for foobar2000.org publish
