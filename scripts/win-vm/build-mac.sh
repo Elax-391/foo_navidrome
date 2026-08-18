@@ -80,6 +80,11 @@ while IFS= read -r f; do SRCS+=("$f"); done < <(
     echo "$REPO/Windows/NavidromePluginWin.cpp"
     echo "$REPO/Windows/NavidromeInputWin.cpp"
     echo "$REPO/Windows/BrowserWindow.cpp"
+    # Keep in sync with the ClCompile list in Windows/foo_navidrome.vcxproj —
+    # this list is hardcoded, so a source added there but not here only shows up
+    # as a wall of undefined symbols at link time.
+    echo "$REPO/Windows/MediaEnrichmentLogic.cpp"
+    echo "$REPO/Windows/EsLyricBridge.cpp"
   } | grep -vE '/(pfc-fb2k-hooks|nix-objects)\.cpp$'
 )
 

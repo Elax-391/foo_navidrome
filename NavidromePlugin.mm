@@ -5,6 +5,9 @@
 #include <helpers/advconfig_impl.h>
 #include <SDK/cfg_var.h>
 #include <SDK/library_manager.h>
+#include <SDK/play_callback.h>
+#include "SubsonicTypes.h"
+#include <algorithm>
 
 // ---------------------------------------------------------------------------
 // GUIDs — replace with your own when forking this component
@@ -19,6 +22,9 @@ static constexpr GUID guid_mainmenu_cmd    = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xa
 static constexpr GUID guid_library_viewer  = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x08 } };
 static constexpr GUID guid_library_prefs   = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x09 } };
 static constexpr GUID guid_cfg_custom_headers = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0a } };
+static constexpr GUID guid_cfg_scrobble    = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0b } };
+static constexpr GUID guid_cfg_stream_format = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0c } };
+static constexpr GUID guid_cfg_max_bitrate = { 0xa1b2c3d4, 0x1111, 0x2222, { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x0d } };
 
 // ---------------------------------------------------------------------------
 // Config variables (exported so SubsonicClient.mm can access them)
@@ -32,7 +38,99 @@ namespace navidrome {
     // API, cover art and audio stream. Used e.g. for Cloudflare Access
     // service-token headers when Navidrome sits behind a Zero Trust tunnel.
     cfg_string cfg_custom_headers(guid_cfg_custom_headers, "");
+    // Report plays back to Navidrome (play counts, "Recently Played", and any
+    // Last.fm / ListenBrainz relay the server has configured).
+    // Qualified: an unqualified cfg_bool resolves to the legacy
+    // cfg_int_t<bool> (no set()) on the Windows SDK headers, and the two
+    // flavours serialize differently — both platforms must use the same one.
+    cfg_var_modern::cfg_bool cfg_scrobble(guid_cfg_scrobble, true);
+
+    // Transcoding preferences, applied to every stream.view request.
+    // cfg_stream_format: "" = let the server decide, "raw" = never transcode,
+    // otherwise a Subsonic format name ("mp3", "opus", "aac", …).
+    // cfg_max_bitrate: kbps ceiling; 0 = unlimited.
+    // Qualified for the same reason as cfg_scrobble — an unqualified cfg_int
+    // resolves to the legacy cfg_int_t<t_int32>, which has no set() and
+    // serializes differently.
+    cfg_string cfg_stream_format(guid_cfg_stream_format, "");
+    cfg_var_modern::cfg_int cfg_max_bitrate(guid_cfg_max_bitrate, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Scrobbler — reports plays back to Navidrome so play counts, "Recently
+// Played" and any Last.fm / ListenBrainz relay configured server-side reflect
+// what's played through foobar2000.
+//
+// Two calls per track, matching the Subsonic contract: submission=false on
+// start ("now playing"), submission=true once enough of the track has been
+// heard (half its length, capped at 4 minutes — the Last.fm convention).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class navidrome_scrobbler : public play_callback_static {
+public:
+    unsigned get_flags() override {
+        return flag_on_playback_new_track | flag_on_playback_time |
+               flag_on_playback_stop;
+    }
+
+    void on_playback_new_track(metadb_handle_ptr track) override {
+        m_songId.clear();
+        m_submitted = false;
+        m_length    = 0.0;
+        if (track.is_empty() || !navidrome::cfg_scrobble.get()) return;
+
+        m_songId = navidrome::trackIdFromURI(track->get_path());
+        if (m_songId.empty()) return;   // not one of ours
+        m_length = track->get_length();
+        scrobbleAsync(m_songId, NO);
+    }
+
+    void on_playback_time(double time) override {
+        if (m_songId.empty() || m_submitted) return;
+        // Unknown length (live stream): fall back to the 4-minute cap alone.
+        double threshold = (m_length > 0) ? std::min(240.0, m_length * 0.5) : 240.0;
+        if (time < threshold) return;
+        m_submitted = true;
+        scrobbleAsync(m_songId, YES);
+    }
+
+    void on_playback_stop(play_control::t_stop_reason) override {
+        m_songId.clear();
+        m_submitted = false;
+    }
+
+    // Unused callbacks (not requested in get_flags, but the interface is pure).
+    void on_playback_starting(play_control::t_track_command, bool) override {}
+    void on_playback_seek(double) override {}
+    void on_playback_pause(bool) override {}
+    void on_playback_edited(metadb_handle_ptr) override {}
+    void on_playback_dynamic_info(const file_info &) override {}
+    void on_playback_dynamic_info_track(const file_info &) override {}
+    void on_volume_change(float) override {}
+
+private:
+    // Fire and forget on a background queue — a slow or unreachable server must
+    // never stall playback, and a failed scrobble isn't worth interrupting for.
+    static void scrobbleAsync(std::string songId, BOOL submission) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            NSError *err = nil;
+            [SubsonicClient.sharedClient
+                scrobbleSongId:[NSString stringWithUTF8String:songId.c_str()]
+                    submission:submission
+                         error:&err];
+        });
+    }
+
+    std::string m_songId;
+    double      m_length    = 0.0;
+    bool        m_submitted = false;
+};
+
+static play_callback_static_factory_t<navidrome_scrobbler> g_navidrome_scrobbler_factory;
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Preferences page (Mac)

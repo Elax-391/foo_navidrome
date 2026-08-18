@@ -17,7 +17,7 @@
     <!-- ARM64EC: native Windows-on-ARM target. foobar2000 prefers an arm64ec/
          binary over the x64 one on ARM (which otherwise runs x64 via emulation).
          ARM64EC is ABI-compatible with x64; the referenced SDK projects already
-         ship Release|ARM64EC (v143). -->
+         ship Release|ARM64EC. -->
     <ProjectConfiguration Include="Debug|ARM64EC">
       <Configuration>Debug</Configuration><Platform>ARM64EC</Platform>
     </ProjectConfiguration>
@@ -38,39 +38,39 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64EC'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64EC'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -110,7 +110,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <AdditionalDependencies>
-        winhttp.lib;crypt32.lib;advapi32.lib;shell32.lib;comctl32.lib;winmm.lib;%(AdditionalDependencies)
+        winhttp.lib;crypt32.lib;advapi32.lib;shell32.lib;comctl32.lib;winmm.lib;ole32.lib;%(AdditionalDependencies)
       </AdditionalDependencies>
       <AdditionalLibraryDirectories>
         $(OutDir);%(AdditionalLibraryDirectories)
@@ -144,6 +144,14 @@
     </Link>
   </ItemDefinitionGroup>
 
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <DisableSpecificWarnings>4100;4702;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
@@ -153,10 +161,41 @@
     <ClCompile Include="NavidromePluginWin.cpp" />
     <ClCompile Include="NavidromeInputWin.cpp" />
     <ClCompile Include="BrowserWindow.cpp" />
+    <ClCompile Include="BrowserExtrasLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="BrowserMutationHub.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="MediaEnrichmentLogic.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="SongJsonParser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ServerIdentity.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ServerProfiles.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ServerRouteRuntime.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ServerConnectionHub.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ServerProfileConfig.cpp" />
+    <ClCompile Include="SubsonicRequestLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ScrobbleLogic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ScrobbleWorker.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ScrobbleService.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="EsLyricBridge.cpp">
@@ -178,9 +217,20 @@
     <ClInclude Include="SongMetadataProjection.h" />
     <ClInclude Include="SongMetadata.h" />
     <ClInclude Include="SongJsonParser.h" />
+    <ClInclude Include="ServerIdentity.h" />
+    <ClInclude Include="ServerProfiles.h" />
+    <ClInclude Include="ServerRouteRuntime.h" />
+    <ClInclude Include="ServerConnectionHub.h" />
+    <ClInclude Include="ServerProfileConfig.h" />
+    <ClInclude Include="SubsonicRequestLogic.h" />
+    <ClInclude Include="ScrobbleLogic.h" />
+    <ClInclude Include="ScrobbleWorker.h" />
+    <ClInclude Include="ScrobbleService.h" />
     <ClInclude Include="TrackUriMetadata.h" />
     <ClInclude Include="NavidromeInputWin.h" />
     <ClInclude Include="BrowserWindow.h" />
+    <ClInclude Include="BrowserExtrasLogic.h" />
+    <ClInclude Include="BrowserMutationHub.h" />
     <ClInclude Include="Localization.h" />
     <ClInclude Include="MediaEnrichmentLogic.h" />
     <ClInclude Include="EsLyricBridge.h" />

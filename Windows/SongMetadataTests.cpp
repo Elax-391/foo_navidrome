@@ -125,6 +125,7 @@ int main() {
     source.samplingRate = 96000;
     source.bitDepth = 24;
     source.channelCount = 2;
+    source.userRating = 4;
     source.replayGain.trackGain = -6.5;
     source.replayGain.trackPeak = 0.95;
     const auto uri = navidrome::buildTrackURI(source);
@@ -138,7 +139,8 @@ int main() {
           roundTrip.groupings[0] == *source.grouping,
           "catalog and single grouping fields round trip");
     check(roundTrip.samplingRate == source.samplingRate &&
-          roundTrip.bitDepth == source.bitDepth && roundTrip.channelCount == source.channelCount,
+          roundTrip.bitDepth == source.bitDepth && roundTrip.channelCount == source.channelCount &&
+          roundTrip.userRating == source.userRating,
           "technical values round trip");
     check(roundTrip.replayGain.trackGain == source.replayGain.trackGain &&
           roundTrip.replayGain.trackPeak == source.replayGain.trackPeak,
@@ -155,12 +157,13 @@ int main() {
           malformed.bitDepth == 24, "malformed optionals remain absent");
     navidrome::Song invalidNumbers;
     check(navidrome::parseTrackURI(
-        "navidrome://track/id?bitrate=-1&channels=-2&discnumber=0&playCount=-1&"
+        "navidrome://track/id?bitrate=-1&channels=-2&discnumber=0&playCount=-1&userRating=6&"
         "samplerate=999999999999999999999&duration=0", invalidNumbers),
         "URI with invalid numeric ranges still parses");
     check(!invalidNumbers.bitRate && !invalidNumbers.channelCount &&
-          !invalidNumbers.discNumber && !invalidNumbers.playCount &&
-          !invalidNumbers.samplingRate && invalidNumbers.duration == 0,
+           !invalidNumbers.discNumber && !invalidNumbers.playCount &&
+           !invalidNumbers.userRating && !invalidNumbers.samplingRate &&
+           invalidNumbers.duration == 0,
           "invalid URI numeric fields remain absent");
     navidrome::Song transcoded;
     transcoded.suffix = "flac";

@@ -1,3 +1,22 @@
+## [1.6.1](https://github.com/santiagorod92/foo_navidrome/compare/v1.6.0...v1.6.1) (2026-08-14)
+
+### Bug Fixes
+
+* Enter now replaces the active playlist before starting playback ([22e91f1](https://github.com/santiagorod92/foo_navidrome/commit/22e91f1152fdd7f9dd38db172253674260ef405c))
+
+## [1.6.0](https://github.com/santiagorod92/foo_navidrome/compare/v1.5.0...v1.6.0) (2026-08-14)
+
+### Features
+
+* Browse the library by genre ([63cb4f7](https://github.com/santiagorod92/foo_navidrome/commit/63cb4f7fc171253addf461c5ef2e8c536f280841))
+* Download original files from the browser ([b879a30](https://github.com/santiagorod92/foo_navidrome/commit/b879a30962f1893faa27507f2690c406b2159f94))
+* Manage server playlists from the browser ([8224da6](https://github.com/santiagorod92/foo_navidrome/commit/8224da63861efb84d64215b5c82dcaaf02699d18))
+* Select the streaming format and maximum bitrate ([2c44673](https://github.com/santiagorod92/foo_navidrome/commit/2c446732acdd45e6c1f7a8bedb6f3379c4dda3da))
+
+### Bug Fixes
+
+* Preserve the track codec suffix in macOS `navidrome://` URIs ([6d2065c](https://github.com/santiagorod92/foo_navidrome/commit/6d2065c30e7ac9113b0e27ec8787c6533900e3e9))
+
 ## [1.1.1](https://github.com/Elax-391/foo_navidrome/compare/v1.1.0...v1.1.1) (2026-08-13)
 
 

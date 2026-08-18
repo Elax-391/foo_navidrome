@@ -15,13 +15,65 @@ inline constexpr wchar_t save[] = L"保存";
 inline constexpr wchar_t cancel[] = L"取消";
 
 inline constexpr wchar_t serverUrl[] = L"服务器 URL：";
+inline constexpr wchar_t serverProfile[] = L"服务器档案：";
+inline constexpr wchar_t profileName[] = L"档案名称：";
+inline constexpr wchar_t serverRoute[] = L"连接线路：";
+inline constexpr wchar_t routeOne[] = L"线路一";
+inline constexpr wchar_t routeTwo[] = L"线路二";
+inline constexpr wchar_t routeThree[] = L"线路三";
+inline constexpr wchar_t routeFour[] = L"线路四";
+inline constexpr wchar_t routeFive[] = L"线路五";
+inline constexpr wchar_t routeSix[] = L"线路六";
+inline constexpr wchar_t routeSeven[] = L"线路七";
+inline constexpr wchar_t routeEight[] = L"线路八";
+inline constexpr wchar_t addRoute[] = L"新增线路";
+inline constexpr wchar_t deleteRoute[] = L"删除线路";
+inline constexpr wchar_t moveRouteUp[] = L"上移";
+inline constexpr wchar_t moveRouteDown[] = L"下移";
+inline constexpr wchar_t automaticFailover[] = L"网络失败时自动切换备用线路";
+inline constexpr wchar_t routeLimitReached[] = L"每个档案最多保存八条线路";
+inline constexpr wchar_t routeLastDeleteBlocked[] = L"至少要保留一条线路";
+inline constexpr wchar_t routeUrlTestRequired[] = L"请先填写该线路的 URL";
+inline constexpr wchar_t routeStatusIdle[] = L"首选和当前线路一致";
+inline constexpr wchar_t automaticSwitchReason[] = L"网络故障后自动切换";
+inline constexpr wchar_t addProfile[] = L"新增";
+inline constexpr wchar_t cancelAddProfile[] = L"取消新增";
+inline constexpr wchar_t saveProfile[] = L"保存档案";
+inline constexpr wchar_t deleteProfile[] = L"删除";
+inline constexpr wchar_t deleteProfileTitle[] = L"删除服务器档案";
+inline constexpr wchar_t deleteProfileConfirm[] =
+    L"确定删除当前服务器档案吗？此操作会立即保存。";
+inline constexpr wchar_t newProfileHint[] =
+    L"请填写完整档案，然后点击“保存档案”立即启用。";
+inline constexpr wchar_t profileSaved[] = L"服务器档案已保存";
+inline constexpr wchar_t profileInvalid[] = L"服务器档案无效";
+inline constexpr wchar_t profileNameRequired[] = L"请输入档案名称";
+inline constexpr wchar_t profileNameDuplicate[] = L"档案名称不能重复";
+inline constexpr wchar_t profileUrlRequired[] = L"当前线路的 URL 不能为空";
+inline constexpr wchar_t profileCredentialsRequired[] =
+    L"新增档案必须填写用户名和密码";
+inline constexpr wchar_t profileLastDeleteBlocked[] = L"至少要保留一个服务器档案";
+inline constexpr wchar_t profilePersistenceFailed[] = L"无法保存服务器档案";
+inline constexpr wchar_t profileRecoveredWarning[] =
+    L"档案配置损坏，已临时恢复旧版设置；下次应用将修复配置。";
 inline constexpr wchar_t username[] = L"用户名：";
 inline constexpr wchar_t password[] = L"密码：";
 inline constexpr wchar_t testConnection[] = L"测试连接";
+inline constexpr wchar_t testRoute[] = L"测试";
 inline constexpr wchar_t testing[] = L"测试中…";
 inline constexpr wchar_t connected[] = L"已连接！";
+inline constexpr wchar_t saveAndSwitchRouteTitle[] = L"保存并切换线路";
+inline constexpr wchar_t saveAndSwitchRoutePrompt[] =
+    L"这条线路的地址或登录信息尚未应用。\n\n"
+    L"是否保存当前档案的编辑并切换到这条线路？";
 inline constexpr char failedUtf8[] = u8"失败";
 inline constexpr wchar_t customHeaders[] = L"自定义请求头…";
+inline constexpr wchar_t reportPlays[] = L"向 Navidrome 汇报播放记录（Scrobble）";
+inline constexpr wchar_t streamFormat[] = L"流格式：";
+inline constexpr wchar_t maxBitrate[] = L"最高码率：";
+inline constexpr wchar_t serverDefault[] = L"服务器默认";
+inline constexpr wchar_t originalFormat[] = L"原始格式（不转码）";
+inline constexpr wchar_t unlimitedBitrate[] = L"不限";
 
 inline constexpr wchar_t browserTitle[] = L"Navidrome 浏览器";
 inline constexpr wchar_t searchCue[] = L"搜索艺术家、专辑、歌曲…";
@@ -30,6 +82,39 @@ inline constexpr wchar_t addAllToPlaylist[] = L"添加全部";
 inline constexpr wchar_t reconcileLibrary[] = L"完整核对";
 inline constexpr wchar_t playNow[] = L"立即播放";
 inline constexpr wchar_t refresh[] = L"刷新";
+inline constexpr wchar_t favorite[] = L"收藏";
+inline constexpr wchar_t unfavorite[] = L"取消收藏";
+inline constexpr wchar_t rating[] = L"评分";
+inline constexpr wchar_t clearRating[] = L"清除评分";
+inline constexpr wchar_t uploadActivePlaylist[] = L"同步当前播放列表到 Navidrome";
+inline constexpr wchar_t uploadDialogTitle[] = L"同步服务器播放列表";
+inline constexpr wchar_t uploadCreate[] = L"创建播放列表";
+inline constexpr wchar_t uploadReplace[] = L"更新所选同名播放列表";
+inline constexpr wchar_t uploadNumberedCopy[] = L"创建编号副本";
+inline constexpr wchar_t uploadCancel[] = L"取消";
+inline constexpr wchar_t downloadOriginal[] = L"下载原始文件…";
+inline constexpr wchar_t downloadFolderPrompt[] = L"选择原始歌曲的保存文件夹";
+inline constexpr wchar_t renamePlaylist[] = L"重命名服务器播放列表…";
+inline constexpr wchar_t deletePlaylist[] = L"删除服务器播放列表…";
+inline constexpr wchar_t renamePlaylistTitle[] = L"重命名服务器播放列表";
+inline constexpr wchar_t renamePlaylistPrompt[] = L"新名称：";
+inline constexpr wchar_t deletePlaylistTitle[] = L"删除服务器播放列表";
+inline constexpr wchar_t uploadCreateInstruction[] =
+    L"将在当前服务器创建播放列表";
+inline constexpr wchar_t uploadCollisionInstruction[] =
+    L"服务器中存在同名播放列表，请选择处理方式";
+
+inline constexpr char smartLists[] = u8"智能列表";
+inline constexpr char serverPlaylists[] = u8"服务器播放列表";
+inline constexpr char genres[] = u8"流派";
+inline constexpr char artists[] = u8"艺术家";
+inline constexpr char starredSongs[] = u8"收藏的歌曲";
+inline constexpr char starredAlbums[] = u8"收藏的专辑";
+inline constexpr char starredArtists[] = u8"收藏的艺术家";
+inline constexpr char newestAlbums[] = u8"最近添加";
+inline constexpr char frequentAlbums[] = u8"最常播放";
+inline constexpr char recentAlbums[] = u8"最近播放";
+inline constexpr char randomAlbums[] = u8"随机专辑";
 
 inline constexpr char loadingArtists[] = u8"正在加载艺术家…";
 inline constexpr char loading[] = u8"加载中…";
@@ -41,6 +126,33 @@ inline constexpr char libraryNotLoaded[] = u8"完整音乐库尚未加载";
 inline constexpr char selectAtLeastOne[] = u8"请至少选择一项";
 inline constexpr char noSongsSelected[] = u8"未选择歌曲";
 inline constexpr char noSongsFound[] = u8"未找到可添加的歌曲";
+inline constexpr char selectFavoriteTarget[] = u8"请选择歌曲、专辑或艺术家";
+inline constexpr char selectRatingTarget[] = u8"请选择一首歌曲进行评分";
+inline constexpr char updatingFavorite[] = u8"正在同步收藏状态…";
+inline constexpr char updatingRating[] = u8"正在同步评分…";
+inline constexpr char favoriteUpdated[] = u8"收藏状态已同步";
+inline constexpr char ratingUpdated[] = u8"评分已同步";
+inline constexpr char noActivePlaylist[] = u8"当前没有活动播放列表";
+inline constexpr char noNavidromeTracks[] = u8"当前播放列表没有可同步的 Navidrome 歌曲";
+inline constexpr char loadingServerPlaylists[] = u8"正在读取服务器播放列表…";
+inline constexpr char resolvingDownloads[] = u8"正在解析待下载歌曲…";
+inline constexpr char downloadingOriginals[] = u8"正在下载原始文件…";
+inline constexpr char selectServerPlaylist[] = u8"请选择一个服务器播放列表";
+inline constexpr char renamingPlaylist[] = u8"正在重命名服务器播放列表…";
+inline constexpr char deletingPlaylist[] = u8"正在删除服务器播放列表…";
+inline constexpr char playlistRenamed[] = u8"服务器播放列表已重命名";
+inline constexpr char playlistDeleted[] = u8"服务器播放列表已删除";
+inline constexpr char uploadingPlaylist[] = u8"正在同步播放列表…";
+inline constexpr char playlistUploadCancelled[] = u8"已取消播放列表同步";
+inline constexpr char invalidPlaylistUploadChoice[] = u8"播放列表同步选择无效";
+inline constexpr char existingPlaylistSnapshotFailed[] =
+    u8"无法在更新前备份服务器原播放列表";
+inline constexpr char ambiguousCreatedPlaylist[] =
+    u8"服务器未返回唯一的新播放列表标识";
+inline constexpr char playlistVerificationFailed[] =
+    u8"无法读取服务器播放列表以验证同步结果";
+inline constexpr char accountChangedRefreshing[] =
+    u8"Navidrome 服务器或账户已更改，正在刷新浏览器，请稍后重试";
 inline constexpr char checkingNewTracks[] = u8"正在检查新增歌曲…";
 inline constexpr char reconcilingLibrary[] = u8"正在完整核对音乐库…";
 inline constexpr char libraryUpToDate[] = u8"没有新增歌曲，音乐库已是最新";
@@ -64,8 +176,70 @@ inline std::string artistCount(std::size_t count) {
     return std::to_string(count) + u8" 位艺术家";
 }
 
+inline std::string genreSongCount(std::size_t count) {
+    return std::to_string(count) + u8" 首歌曲";
+}
+
+inline std::string downloadedTracks(std::size_t succeeded, std::size_t failed) {
+    std::string result = u8"已下载 " + std::to_string(succeeded) + u8" 首歌曲";
+    if (failed > 0)
+        result += u8"，" + std::to_string(failed) + u8" 首失败";
+    return result;
+}
+
+inline std::wstring deletePlaylistConfirmation(const std::wstring& name) {
+    return L"确定从服务器删除播放列表“" + name +
+        L"”吗？\r\n\r\n歌曲文件不会被删除。";
+}
+
 inline std::string searchResultCount(std::size_t count) {
     return std::to_string(count) + u8" 条搜索结果";
+}
+
+inline std::string uploadConfirmation(const std::string& name,
+                                      const std::string& server,
+                                      const std::string& accountName,
+                                      std::size_t mapped,
+                                      std::size_t skipped) {
+    std::string result = u8"本地播放列表：“" + name + u8"”\n服务器：" + server +
+        u8"\n账户：" + accountName + u8"\n将同步 " + std::to_string(mapped) + u8" 首歌曲";
+    if (skipped > 0)
+        result += u8"，跳过 " + std::to_string(skipped) + u8" 个非 Navidrome 条目";
+    return result;
+}
+
+inline std::wstring playlistChoiceSongCount(std::size_t count) {
+    return L"（" + std::to_wstring(count) + L" 首）";
+}
+
+inline std::string playlistUploadComplete(const std::string& name,
+                                          std::size_t count,
+                                          std::size_t skipped) {
+    std::string result = u8"已同步播放列表“" + name + u8"”，共 " +
+        std::to_string(count) + u8" 首歌曲";
+    if (skipped > 0)
+        result += u8"，跳过 " + std::to_string(skipped) + u8" 个条目";
+    return result;
+}
+
+inline std::string playlistUploadPartial(const std::string& message) {
+    return u8"播放列表只同步了部分内容" +
+        (message.empty() ? std::string{} : u8"：" + message);
+}
+
+inline std::string playlistUploadRestored(const std::string& message) {
+    return u8"同步未完成，服务器原播放列表已恢复" +
+        (message.empty() ? std::string{} : u8"：" + message);
+}
+
+inline std::string playlistUploadUnknown(const std::string& message) {
+    return u8"无法确认服务器播放列表的最终状态" +
+        (message.empty() ? std::string{} : u8"：" + message);
+}
+
+inline std::string playlistUploadFailed(const std::string& message) {
+    return u8"播放列表同步失败，服务器内容未更改" +
+        (message.empty() ? std::string{} : u8"：" + message);
 }
 
 inline std::string importProgress(std::size_t completed, std::size_t total,
@@ -127,6 +301,14 @@ inline std::string httpError(unsigned long status) {
 
 inline std::string requestError(unsigned long code) {
     return u8"请求失败（错误码=" + std::to_string(code) + u8"）";
+}
+
+inline std::string fileCreateError(unsigned long code) {
+    return u8"无法创建下载文件（错误码=" + std::to_string(code) + u8"）";
+}
+
+inline std::string fileWriteError(unsigned long code) {
+    return u8"无法写入下载文件（错误码=" + std::to_string(code) + u8"）";
 }
 
 inline constexpr char unknownSubsonicError[] = u8"未知的 Subsonic 错误";

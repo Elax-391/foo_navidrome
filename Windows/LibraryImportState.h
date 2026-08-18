@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ServerIdentity.h"
 #include "SubsonicClientWin.h"
 #include <cstdint>
 #include <memory>
@@ -27,7 +28,6 @@ struct LoadedImportState {
     std::string error;
 };
 
-std::string normalizeServerUrl(const std::string& url);
 std::string importIdentity(const SubsonicRequestContext& context);
 std::string makeLibraryFingerprint(const std::vector<MusicFolder>& folders);
 

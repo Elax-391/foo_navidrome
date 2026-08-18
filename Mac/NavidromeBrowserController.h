@@ -9,8 +9,23 @@ typedef NS_ENUM(NSInteger, NavidromeNodeType) {
     NavidromeNodeTypeArtist,
     NavidromeNodeTypeAlbum,
     NavidromeNodeTypeSong,
+    NavidromeNodeTypeCategory,  // Smart list (Starred, Recently Added, …)
+    NavidromeNodeTypePlaylist,  // A playlist stored on the server
+    NavidromeNodeTypeGenre,     // A genre from getGenres.view
     NavidromeNodeTypeLoading,   // Placeholder while loading children
     NavidromeNodeTypeError,     // Placeholder when load fails
+};
+
+// Smart-list roots shown above the artist list. Each maps to one Subsonic
+// endpoint — see -loadChildrenOfNode:inOutlineView:.
+typedef NS_ENUM(NSInteger, NavidromeCategoryKind) {
+    NavidromeCategoryStarred,          // getStarred2.view       → songs
+    NavidromeCategoryRecentlyAdded,    // getAlbumList2 newest   → albums
+    NavidromeCategoryMostPlayed,       // getAlbumList2 frequent → albums
+    NavidromeCategoryRecentlyPlayed,   // getAlbumList2 recent   → albums
+    NavidromeCategoryRandom,           // getAlbumList2 random   → albums
+    NavidromeCategoryPlaylists,        // getPlaylists.view      → playlists
+    NavidromeCategoryGenres,           // getGenres.view         → genres
 };
 
 @interface NavidromeNode : NSObject
@@ -24,6 +39,10 @@ typedef NS_ENUM(NSInteger, NavidromeNodeType) {
 @property (nonatomic, assign) NSInteger year;
 @property (nonatomic, assign) NSTimeInterval duration;
 @property (nonatomic, copy)   NSString *coverArtId;
+@property (nonatomic, copy)   NSString *suffix;         // codec suffix (mp3/flac/…)
+@property (nonatomic, assign) NavidromeCategoryKind categoryKind;  // category nodes only
+@property (nonatomic, assign) BOOL      starred;    // server-side favorite
+@property (nonatomic, assign) NSInteger rating;     // 0 = unrated, else 1-5
 
 // True if children have been loaded (may still be empty)
 @property (nonatomic, assign) BOOL childrenLoaded;
@@ -36,6 +55,9 @@ typedef NS_ENUM(NSInteger, NavidromeNodeType) {
 + (instancetype)artistNode:(SubsonicArtist *)artist;
 + (instancetype)albumNode:(SubsonicAlbum *)album;
 + (instancetype)songNode:(SubsonicSong *)song;
++ (instancetype)playlistNode:(SubsonicPlaylist *)playlist;
++ (instancetype)genreNode:(SubsonicGenre *)genre;
++ (instancetype)categoryNode:(NavidromeCategoryKind)kind title:(NSString *)title;
 + (instancetype)loadingNode;
 + (instancetype)errorNodeWithMessage:(NSString *)msg;
 
@@ -51,7 +73,8 @@ typedef NS_ENUM(NSInteger, NavidromeNodeType) {
 
 @interface NavidromeBrowserController : NSViewController
                                       <NSOutlineViewDataSource,
-                                       NSOutlineViewDelegate>
+                                       NSOutlineViewDelegate,
+                                       NSMenuDelegate>
 @end
 
 // Wraps a fresh NavidromeBrowserController inside an NSWindow and shows it.
