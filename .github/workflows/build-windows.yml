@@ -13,6 +13,7 @@ name: Build Windows
 # packaged .fb2k-component plus all three raw DLLs.
 
 on:
+  pull_request:
   workflow_call:
     inputs:
       ref:

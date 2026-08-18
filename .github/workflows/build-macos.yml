@@ -3,6 +3,7 @@ name: Build macOS
 # Builds and validates a universal arm64/x86_64 component without publishing a
 # GitHub release. release.yml uses the same ci-build.sh entry point.
 on:
+  pull_request:
   workflow_call:
     inputs:
       ref:
