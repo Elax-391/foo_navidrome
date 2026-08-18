@@ -1,3 +1,26 @@
+## [1.7.0](https://github.com/Elax-391/foo_navidrome/compare/v1.6.1...v1.7.0) (2026-08-18)
+
+
+### Features
+
+* integrate upstream v1.6.1 and automatic multi-route failover ([#1](https://github.com/Elax-391/foo_navidrome/issues/1)) ([46e71ea](https://github.com/Elax-391/foo_navidrome/commit/46e71eaac1805924b994df7cc720f554f8d0e267))
+* **windows:** add complete metadata and ReplayGain support ([1796c6a](https://github.com/Elax-391/foo_navidrome/commit/1796c6aaf1996274e3ef29eb2b7def6d00e0db78))
+* **windows:** add cover art and ESLyric support ([45beaca](https://github.com/Elax-391/foo_navidrome/commit/45beaca34539f8bfd932558ece3a824aab932d5e))
+* **windows:** add full-library playlist import ([5ae5352](https://github.com/Elax-391/foo_navidrome/commit/5ae5352f71cec828e6386cd1515ef663c3044e12))
+* **windows:** add incremental library import ([4751efd](https://github.com/Elax-391/foo_navidrome/commit/4751efdb4221829bc2c6c9cde7d9671fcd004da5))
+* **windows:** add multi-route automatic failover ([6cc2639](https://github.com/Elax-391/foo_navidrome/commit/6cc26398f3445b034db2b29308d5688d22f278a3))
+* **windows:** add robust scrobble lifecycle ([24617db](https://github.com/Elax-391/foo_navidrome/commit/24617dbced3da149bc73f1ff974a6fc21a0748c3))
+* **windows:** add robust Subsonic extras API ([90cba62](https://github.com/Elax-391/foo_navidrome/commit/90cba62132d43cf3ab5a4a994ce28c2f3857b55f))
+* **windows:** add Simplified Chinese UI localization ([15102dd](https://github.com/Elax-391/foo_navidrome/commit/15102dd0c0dc9fad6876979994f2831ee5592f9b))
+* **windows:** integrate browser playlist extras ([5b53fa6](https://github.com/Elax-391/foo_navidrome/commit/5b53fa66a8c3bc6c525f97f9edd42cd54195cb5c))
+
+
+### Bug Fixes
+
+* **ci:** detect ARM64EC hybrid metadata ([8807901](https://github.com/Elax-391/foo_navidrome/commit/88079015f458c6a38efbcbc5918698776ccad30b))
+* **ci:** validate universal Mach-O slices correctly ([f2c0057](https://github.com/Elax-391/foo_navidrome/commit/f2c0057a27dadd5b7e16a80b68e5acacae43463a))
+* **release:** publish complete Windows metadata binaries ([b6fb064](https://github.com/Elax-391/foo_navidrome/commit/b6fb06451fd4c35993912d9988ad6a448c513c4f))
+
 ## [1.6.1](https://github.com/santiagorod92/foo_navidrome/compare/v1.6.0...v1.6.1) (2026-08-14)
 
 ### Bug Fixes
