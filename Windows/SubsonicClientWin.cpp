@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "SubsonicClientWin.h"
 #include "Localization.h"
+#include "ServerProfileConfig.h"
 #include "SongJsonParser.h"
 #include "SubsonicRequestLogic.h"
 #include <algorithm>
@@ -42,6 +43,64 @@ static void applySecureProtocols(HINTERNET hSession) {
 #endif
     WinHttpSetOption(hSession, WINHTTP_OPTION_SECURE_PROTOCOLS,
                      &protocols, sizeof(protocols));
+}
+
+static navidrome::TransportFailureKind classifyTransportFailure(
+        DWORD code) noexcept {
+    switch (code) {
+    case ERROR_WINHTTP_NAME_NOT_RESOLVED:
+        return navidrome::TransportFailureKind::Resolve;
+    case ERROR_WINHTTP_CANNOT_CONNECT:
+    case ERROR_WINHTTP_CONNECTION_ERROR:
+        return navidrome::TransportFailureKind::Connect;
+    case ERROR_WINHTTP_TIMEOUT:
+        return navidrome::TransportFailureKind::Timeout;
+    case ERROR_WINHTTP_SECURE_CHANNEL_ERROR:
+        return navidrome::TransportFailureKind::TlsHandshake;
+    case ERROR_WINHTTP_OPERATION_CANCELLED:
+        return navidrome::TransportFailureKind::Cancelled;
+    default:
+        return navidrome::TransportFailureKind::Other;
+    }
+}
+
+static navidrome::RouteFailureKind routeFailureKind(
+        navidrome::TransportFailureKind kind) noexcept {
+    using Transport = navidrome::TransportFailureKind;
+    switch (kind) {
+    case Transport::Resolve: return navidrome::RouteFailureKind::Resolve;
+    case Transport::Connect: return navidrome::RouteFailureKind::Connect;
+    case Transport::Timeout: return navidrome::RouteFailureKind::Timeout;
+    case Transport::TlsHandshake:
+        return navidrome::RouteFailureKind::TlsHandshake;
+    case Transport::InvalidUrl:
+        return navidrome::RouteFailureKind::InvalidUrl;
+    case Transport::HttpResponse:
+        return navidrome::RouteFailureKind::HttpResponse;
+    case Transport::Cancelled:
+        return navidrome::RouteFailureKind::Cancelled;
+    default: return navidrome::RouteFailureKind::Other;
+    }
+}
+
+static void setTransportFailure(navidrome::TransportFailure* failure,
+                                DWORD code) noexcept {
+    if (!failure) return;
+    failure->kind = classifyTransportFailure(code);
+    failure->nativeCode = code;
+}
+
+static std::string replaceServerBase(const std::string& url,
+                                     std::string oldBase,
+                                     std::string newBase) {
+    while (!oldBase.empty() && oldBase.back() == '/') oldBase.pop_back();
+    while (!newBase.empty() && newBase.back() == '/') newBase.pop_back();
+    if (oldBase.empty() || newBase.empty() ||
+        url.compare(0, oldBase.size(), oldBase) != 0 ||
+        (url.size() > oldBase.size() && url[oldBase.size()] != '/')) {
+        return {};
+    }
+    return newBase + url.substr(oldBase.size());
 }
 
 static std::wstring toWide(const std::string& s) {
@@ -130,6 +189,20 @@ navidrome::SubsonicRequestContext navidrome::SubsonicClientWin::snapshot() const
     context.salt = cfg_salt.get().length() > 0
         ? cfg_salt.get().c_str() : "fb2k_navidrome";
     context.customHeaders = cfg_custom_headers.get().c_str();
+    const auto runtime = ServerProfileConfig::get().runtimeSnapshot();
+    context.routePlanRevision = runtime.revision;
+    context.profileId = runtime.profileId;
+    context.preferredRouteId = runtime.preferredRouteId;
+    context.effectiveRouteId = runtime.effectiveRouteId;
+    context.autoFailover = runtime.autoFailover;
+    context.routeCandidates = runtime.candidates;
+    const auto effective = std::find_if(
+        runtime.candidates.begin(), runtime.candidates.end(),
+        [&](const RouteCandidate& candidate) {
+            return candidate.routeId == runtime.effectiveRouteId;
+        });
+    if (effective != runtime.candidates.end())
+        context.serverUrl = effective->serverUrl;
     return context;
 }
 
@@ -158,26 +231,118 @@ std::string navidrome::SubsonicClientWin::buildURL(
 std::string navidrome::SubsonicClientWin::request(
         const SubsonicRequestContext& context, const std::string& endpoint,
         const OrderedParameters& parameters, RequestMethod method,
-        std::string& outError) const {
+        std::string& outError, RequestRetryPolicy retryPolicy) const {
     return request(context, endpoint, parameters, method, outError,
-                   HttpRequestProfile{});
+                   HttpRequestProfile{}, retryPolicy);
 }
 
 std::string navidrome::SubsonicClientWin::request(
         const SubsonicRequestContext& context, const std::string& endpoint,
         const OrderedParameters& parameters, RequestMethod method,
-        std::string& outError, const HttpRequestProfile& profile) const {
-    if (method == RequestMethod::Get) {
-        return httpRequest(context, buildURL(context, endpoint, parameters), method,
-                           {}, outError, profile);
+        std::string& outError, const HttpRequestProfile& profile,
+        RequestRetryPolicy retryPolicy) const {
+    const auto execute = [&](const SubsonicRequestContext& requestContext,
+                             const HttpRequestProfile& requestProfile,
+                             TransportFailure* failure) {
+        if (method == RequestMethod::Get) {
+            return httpRequest(
+                requestContext,
+                buildURL(requestContext, endpoint, parameters), method, {},
+                outError, requestProfile, failure);
+        }
+        std::string base = requestContext.serverUrl;
+        while (!base.empty() && base.back() == '/') base.pop_back();
+        auto allParameters = authParameters(requestContext);
+        allParameters.insert(allParameters.end(), parameters.begin(),
+                             parameters.end());
+        return httpRequest(
+            requestContext, base + "/rest/" + endpoint, method,
+            encodeFormParameters(allParameters), outError, requestProfile,
+            failure);
+    };
+
+    TransportFailure failure;
+    std::string response = execute(context, profile, &failure);
+    if (!response.empty() || failure.kind == TransportFailureKind::None) {
+        return response;
     }
 
-    std::string base = context.serverUrl;
-    while (!base.empty() && base.back() == '/') base.pop_back();
-    auto allParameters = authParameters(context);
-    allParameters.insert(allParameters.end(), parameters.begin(), parameters.end());
-    return httpRequest(context, base + "/rest/" + endpoint, method,
-                        encodeFormParameters(allParameters), outError, profile);
+    const auto retryContext = tryFailoverAfterTransportFailure(
+        context, failure.kind);
+    if (!retryContext || retryPolicy != RequestRetryPolicy::SafeRead)
+        return response;
+
+    TransportFailure retryFailure;
+    outError.clear();
+    return execute(*retryContext, profile, &retryFailure);
+}
+
+std::optional<navidrome::SubsonicRequestContext>
+navidrome::SubsonicClientWin::tryFailoverAfterTransportFailure(
+        const SubsonicRequestContext& context,
+        TransportFailureKind failure) const {
+    if (failure == TransportFailureKind::None || !context.autoFailover ||
+        context.routeCandidates.size() < 2) {
+        return std::nullopt;
+    }
+
+    RoutePlanSnapshot routeSnapshot;
+    routeSnapshot.revision = context.routePlanRevision;
+    routeSnapshot.profileId = context.profileId;
+    routeSnapshot.preferredRouteId = context.preferredRouteId;
+    routeSnapshot.effectiveRouteId = context.effectiveRouteId;
+    routeSnapshot.autoFailover = context.autoFailover;
+    routeSnapshot.candidates = context.routeCandidates;
+    const auto failover = ServerProfileConfig::get().runtime().failover(
+        routeSnapshot, routeFailureKind(failure),
+        [&](const RouteCandidate& candidate, std::string& probeError) {
+            if (candidate.serverUrl.empty()) {
+                probeError = "empty route URL";
+                return false;
+            }
+            SubsonicRequestContext probeContext = context;
+            probeContext.serverUrl = candidate.serverUrl;
+            probeContext.effectiveRouteId = candidate.routeId;
+            probeContext.autoFailover = false;
+            probeContext.routeCandidates.clear();
+            HttpRequestProfile probeProfile;
+            probeProfile.resolveTimeoutMs = 2000;
+            probeProfile.connectTimeoutMs = 3000;
+            probeProfile.sendTimeoutMs = 3000;
+            probeProfile.receiveTimeoutMs = 4000;
+            probeProfile.overallTimeoutMs = 12000;
+            probeProfile.maxResponseBytes = 64 * 1024;
+            probeProfile.disableRedirects = true;
+            TransportFailure probeFailure;
+            const std::string body = httpRequest(
+                probeContext, buildURL(probeContext, "ping.view", {}),
+                RequestMethod::Get, {}, probeError, probeProfile,
+                &probeFailure);
+            return !body.empty() && !checkedResponse(body, probeError).empty();
+        });
+    if (failover.status != RouteFailoverStatus::Switched)
+        return std::nullopt;
+
+    const auto target = std::find_if(
+        context.routeCandidates.begin(), context.routeCandidates.end(),
+        [&](const RouteCandidate& candidate) {
+            return candidate.routeId == failover.routeId;
+        });
+    if (target == context.routeCandidates.end()) return std::nullopt;
+
+    const std::string routeId = target->routeId;
+    const std::uint64_t planRevision = context.routePlanRevision;
+    fb2k::inMainThread([routeId, planRevision]() {
+        ServerProfileConfig::get().applyRuntimeRoute(
+            routeId, planRevision, "network failure");
+    });
+
+    SubsonicRequestContext switchedContext = context;
+    switchedContext.serverUrl = target->serverUrl;
+    switchedContext.effectiveRouteId = target->routeId;
+    switchedContext.autoFailover = false;
+    switchedContext.routeCandidates.clear();
+    return switchedContext;
 }
 
 std::vector<std::string> navidrome::SubsonicClientWin::customHeaderLines() {
@@ -201,7 +366,9 @@ std::string navidrome::SubsonicClientWin::generateToken(const std::string& passw
 std::string navidrome::SubsonicClientWin::httpRequest(
         const SubsonicRequestContext& context, const std::string& urlStr,
         RequestMethod method, const std::string& body,
-        std::string& outError, const HttpRequestProfile& profile) const {
+        std::string& outError, const HttpRequestProfile& profile,
+        TransportFailure* failure) const {
+    if (failure) *failure = {};
     const auto requestStarted = std::chrono::steady_clock::now();
     const auto overallTimedOut = [&]() {
         if (profile.overallTimeoutMs <= 0) return false;
@@ -219,24 +386,41 @@ std::string navidrome::SubsonicClientWin::httpRequest(
     uc.lpszExtraInfo   = extraInfo; uc.dwExtraInfoLength = 8192;
 
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
+        if (failure) {
+            failure->kind = TransportFailureKind::InvalidUrl;
+            failure->nativeCode = GetLastError();
+        }
         outError = navidrome::l10n::invalidUrl; return "";
     }
 
     HINTERNET hSess = WinHttpOpen(L"foo_navidrome/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSess) { outError = navidrome::l10n::winHttpOpenFailed; return ""; }
+    if (!hSess) {
+        const DWORD code = GetLastError();
+        setTransportFailure(failure, code);
+        outError = navidrome::l10n::winHttpOpenFailed;
+        return "";
+    }
     if (!WinHttpSetTimeouts(hSess, profile.resolveTimeoutMs,
             profile.connectTimeoutMs, profile.sendTimeoutMs,
             profile.receiveTimeoutMs)) {
-        outError = navidrome::l10n::requestError(GetLastError());
+        const DWORD code = GetLastError();
+        setTransportFailure(failure, code);
+        outError = navidrome::l10n::requestError(code);
         WinHttpCloseHandle(hSess);
         return "";
     }
     applySecureProtocols(hSess);
 
     HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
-    if (!hConn) { WinHttpCloseHandle(hSess); outError = navidrome::l10n::connectFailed; return ""; }
+    if (!hConn) {
+        const DWORD code = GetLastError();
+        setTransportFailure(failure, code);
+        WinHttpCloseHandle(hSess);
+        outError = navidrome::l10n::connectFailed;
+        return "";
+    }
 
     DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
     const wchar_t* verb = method == RequestMethod::FormPost ? L"POST" : L"GET";
@@ -247,14 +431,18 @@ std::string navidrome::SubsonicClientWin::httpRequest(
 
     std::string result;
     if (!hReq) {
-        outError = navidrome::l10n::requestError(GetLastError());
+        const DWORD code = GetLastError();
+        setTransportFailure(failure, code);
+        outError = navidrome::l10n::requestError(code);
     } else {
         bool requestReady = true;
         if (profile.disableRedirects) {
             DWORD disabledFeatures = WINHTTP_DISABLE_REDIRECTS;
             if (!WinHttpSetOption(hReq, WINHTTP_OPTION_DISABLE_FEATURE,
                     &disabledFeatures, sizeof(disabledFeatures))) {
-                outError = navidrome::l10n::requestError(GetLastError());
+                const DWORD code = GetLastError();
+                setTransportFailure(failure, code);
+                outError = navidrome::l10n::requestError(code);
                 requestReady = false;
             }
         }
@@ -284,20 +472,35 @@ std::string navidrome::SubsonicClientWin::httpRequest(
                 WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                 nullptr, &status, &sz, nullptr);
             bool responseTimedOut = overallTimedOut();
-            DWORD avail = 0;
-            while (!responseTimedOut &&
-                   WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
+            bool responseReadFailed = false;
+            for (;;) {
+                if (responseTimedOut) break;
+                DWORD avail = 0;
+                if (!WinHttpQueryDataAvailable(hReq, &avail)) {
+                    const DWORD code = GetLastError();
+                    result.clear();
+                    setTransportFailure(failure, code);
+                    outError = navidrome::l10n::requestError(code);
+                    responseReadFailed = true;
+                    break;
+                }
+                if (avail == 0) break;
                 if (result.size() > profile.maxResponseBytes ||
                     avail > profile.maxResponseBytes - result.size()) {
                     result.clear();
                     outError = navidrome::l10n::invalidResponse;
+                    if (failure) failure->kind = TransportFailureKind::Other;
+                    responseReadFailed = true;
                     break;
                 }
                 std::string chunk(avail, '\0');
                 DWORD read = 0;
                 if (!WinHttpReadData(hReq, &chunk[0], avail, &read)) {
+                    const DWORD code = GetLastError();
                     result.clear();
-                    outError = navidrome::l10n::requestError(GetLastError());
+                    setTransportFailure(failure, code);
+                    outError = navidrome::l10n::requestError(code);
+                    responseReadFailed = true;
                     break;
                 }
                 result.append(chunk, 0, read);
@@ -306,16 +509,23 @@ std::string navidrome::SubsonicClientWin::httpRequest(
             if (responseTimedOut) {
                 result.clear();
                 outError = navidrome::l10n::requestError(ERROR_WINHTTP_TIMEOUT);
-            } else if (status != 200) {
+                setTransportFailure(failure, ERROR_WINHTTP_TIMEOUT);
+            } else if (!responseReadFailed && status != 200) {
                 const auto response = parseSubsonicResponseJson(result);
                 if (response.valid && response.error && !response.error->message.empty())
                     outError = response.error->message;
                 else
                     outError = navidrome::l10n::httpError(status);
+                if (failure) {
+                    failure->kind = TransportFailureKind::HttpResponse;
+                    failure->httpStatus = status;
+                }
                 result.clear();
             }
         } else if (requestReady) {
-            outError = navidrome::l10n::requestError(GetLastError());
+            const DWORD code = GetLastError();
+            setTransportFailure(failure, code);
+            outError = navidrome::l10n::requestError(code);
         }
         WinHttpCloseHandle(hReq);
     }
@@ -330,7 +540,8 @@ bool navidrome::SubsonicClientWin::ping(std::string& outError) {
 
 bool navidrome::SubsonicClientWin::ping(
         const SubsonicRequestContext& context, std::string& outError) {
-    std::string body = request(context, "ping.view", {}, RequestMethod::Get, outError);
+    std::string body = request(context, "ping.view", {}, RequestMethod::Get,
+                               outError, RequestRetryPolicy::Never);
     if (body.empty()) return false;
     auto root = checkedResponse(body, outError);
     return !root.empty();
@@ -338,7 +549,8 @@ bool navidrome::SubsonicClientWin::ping(
 
 navidrome::ServerInfo navidrome::SubsonicClientWin::getServerInfo(
         const SubsonicRequestContext& context, std::string& outError) {
-    std::string body = request(context, "ping.view", {}, RequestMethod::Get, outError);
+    std::string body = request(context, "ping.view", {}, RequestMethod::Get,
+                               outError, RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto response = parseSubsonicResponseJson(body);
     if (!response.valid || !response.ok) {
@@ -356,7 +568,8 @@ std::vector<navidrome::MusicFolder>
 navidrome::SubsonicClientWin::getMusicFolders(
         const SubsonicRequestContext& context, std::string& outError) {
     std::string body = request(context, "getMusicFolders.view", {},
-                               RequestMethod::Get, outError);
+                               RequestMethod::Get, outError,
+                               RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -370,7 +583,8 @@ navidrome::SubsonicClientWin::getMusicFolders(
 navidrome::ScanStatus navidrome::SubsonicClientWin::getScanStatus(
         const SubsonicRequestContext& context, std::string& outError) {
     std::string body = request(context, "getScanStatus.view", {},
-                               RequestMethod::Get, outError);
+                               RequestMethod::Get, outError,
+                               RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -387,7 +601,8 @@ std::vector<navidrome::Song> navidrome::SubsonicClientWin::getSongsPage(
         {"songOffset", std::to_string(offset)},
     };
     std::string body = request(context, "search3.view", params,
-                               RequestMethod::Get, outError);
+                               RequestMethod::Get, outError,
+                               RequestRetryPolicy::SafeRead);
     if (body.empty()) {
         if (outUnsupported) *outUnsupported = indicatesUnsupportedSearch(outError);
         return {};
@@ -408,7 +623,8 @@ std::vector<navidrome::Artist> navidrome::SubsonicClientWin::getArtists(std::str
 std::vector<navidrome::Artist> navidrome::SubsonicClientWin::getArtists(
         const SubsonicRequestContext& context, std::string& outError) {
     std::string body = request(context, "getArtists.view", {},
-                               RequestMethod::Get, outError);
+                               RequestMethod::Get, outError,
+                               RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -426,7 +642,8 @@ navidrome::SubsonicClientWin::getAlbumsForArtist(
         const SubsonicRequestContext& context, const std::string& artistId,
         std::string& outError) {
     std::string body = request(context, "getArtist.view", {{"id", artistId}},
-                               RequestMethod::Get, outError);
+                               RequestMethod::Get, outError,
+                               RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -445,7 +662,8 @@ navidrome::SubsonicClientWin::getSongsForAlbum(
         const SubsonicRequestContext& context, const std::string& albumId,
         std::string& outError) {
     std::string body = request(context, "getAlbum.view", {{"id", albumId}},
-                               RequestMethod::Get, outError);
+                               RequestMethod::Get, outError,
+                               RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -466,7 +684,8 @@ navidrome::SearchResults navidrome::SubsonicClientWin::search(
         {"albumCount", "20"}, {"songCount", "50"},
     };
     std::string body = request(context, "search3.view", params,
-                               RequestMethod::Get, outError);
+                               RequestMethod::Get, outError,
+                               RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -486,7 +705,8 @@ std::vector<navidrome::Album> navidrome::SubsonicClientWin::getAlbumList(
         {"size", std::to_string(count)},
     };
     const auto body = request(context, "getAlbumList2.view", parameters,
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto root = checkedResponse(body, outError);
     return root.empty() ? std::vector<Album>() : parseAlbumArrayJson(root);
@@ -495,7 +715,8 @@ std::vector<navidrome::Album> navidrome::SubsonicClientWin::getAlbumList(
 navidrome::StarredResults navidrome::SubsonicClientWin::getStarred(
         const SubsonicRequestContext& context, std::string& outError) {
     const auto body = request(context, "getStarred2.view", {},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -519,7 +740,8 @@ navidrome::StarredResults navidrome::SubsonicClientWin::getStarred(
 std::vector<navidrome::Genre> navidrome::SubsonicClientWin::getGenres(
         const SubsonicRequestContext& context, std::string& outError) {
     const auto body = request(context, "getGenres.view", {},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -536,7 +758,8 @@ std::vector<navidrome::Song> navidrome::SubsonicClientWin::getSongsForGenre(
     if (genre.empty()) return {};
     const auto body = request(context, "getSongsByGenre.view",
                               {{"genre", genre}, {"count", std::to_string(count)}},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto root = checkedResponse(body, outError);
     return root.empty()
@@ -551,7 +774,8 @@ bool navidrome::SubsonicClientWin::setFavorite(
     if (kind == FavoriteKind::Album) key = "albumId";
     else if (kind == FavoriteKind::Artist) key = "artistId";
     const auto body = request(context, favorite ? "star.view" : "unstar.view",
-                              {{key, id}}, RequestMethod::Get, outError);
+                              {{key, id}}, RequestMethod::Get, outError,
+                              RequestRetryPolicy::Never);
     return !body.empty() && !checkedResponse(body, outError).empty();
 }
 
@@ -564,14 +788,16 @@ bool navidrome::SubsonicClientWin::setRating(
     }
     const auto body = request(context, "setRating.view",
                               {{"id", songId}, {"rating", std::to_string(rating)}},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::Never);
     return !body.empty() && !checkedResponse(body, outError).empty();
 }
 
 std::vector<navidrome::ServerPlaylist> navidrome::SubsonicClientWin::getPlaylists(
         const SubsonicRequestContext& context, std::string& outError) {
     const auto body = request(context, "getPlaylists.view", {},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto root = checkedResponse(body, outError);
     return root.empty() ? std::vector<ServerPlaylist>() : parsePlaylistArrayJson(root);
@@ -581,7 +807,8 @@ navidrome::ServerPlaylistDetails navidrome::SubsonicClientWin::getPlaylist(
         const SubsonicRequestContext& context, const std::string& playlistId,
         std::string& outError) {
     const auto body = request(context, "getPlaylist.view", {{"id", playlistId}},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -597,7 +824,8 @@ navidrome::OpenSubsonicCapabilities
 navidrome::SubsonicClientWin::getOpenSubsonicCapabilities(
         const SubsonicRequestContext& context, std::string& outError) {
     const auto body = request(context, "getOpenSubsonicExtensions.view", {},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::SafeRead);
     if (body.empty()) return {};
     const auto root = checkedResponse(body, outError);
     if (root.empty()) return {};
@@ -647,7 +875,8 @@ navidrome::PlaylistWriteResult navidrome::SubsonicClientWin::createOrReplacePlay
             return result;
         }
         const auto createBody = request(context, "createPlaylist.view", {{"name", name}},
-                                        RequestMethod::Get, outError);
+                                        RequestMethod::Get, outError,
+                                        RequestRetryPolicy::Never);
         const auto createRoot = createBody.empty()
             ? std::string() : checkedResponse(createBody, outError);
         if (createRoot.empty()) {
@@ -675,7 +904,8 @@ navidrome::PlaylistWriteResult navidrome::SubsonicClientWin::createOrReplacePlay
     const RequestMethod initialMethod = plan.mode == PlaylistWriteMode::SingleFormPost
         ? RequestMethod::FormPost : RequestMethod::Get;
     const auto initialBody = request(context, "createPlaylist.view",
-                                     plan.initialParameters, initialMethod, outError);
+                                     plan.initialParameters, initialMethod,
+                                     outError, RequestRetryPolicy::Never);
     const auto initialRoot = initialBody.empty()
         ? std::string() : checkedResponse(initialBody, outError);
     if (initialRoot.empty()) {
@@ -691,7 +921,8 @@ navidrome::PlaylistWriteResult navidrome::SubsonicClientWin::createOrReplacePlay
     if (plan.mode == PlaylistWriteMode::IncrementalGet) {
         for (const auto& batch : plan.appendBatches) {
             const auto updateBody = request(context, "updatePlaylist.view", batch,
-                                            RequestMethod::Get, outError);
+                                            RequestMethod::Get, outError,
+                                            RequestRetryPolicy::Never);
             if (updateBody.empty() || checkedResponse(updateBody, outError).empty()) {
                 result.state = PlaylistWriteState::Partial;
                 result.error = outError;
@@ -728,7 +959,8 @@ navidrome::PlaylistWriteResult navidrome::SubsonicClientWin::updatePlaylist(
         result.error = outError = "playlist update exceeds the conservative GET limit";
         return result;
     }
-    const auto body = request(context, "updatePlaylist.view", parameters, method, outError);
+    const auto body = request(context, "updatePlaylist.view", parameters,
+                              method, outError, RequestRetryPolicy::Never);
     if (body.empty()) {
         result.error = outError;
         return result;
@@ -747,7 +979,8 @@ bool navidrome::SubsonicClientWin::renamePlaylist(
     if (playlistId.empty() || name.empty()) return false;
     const auto body = request(context, "updatePlaylist.view",
                               {{"playlistId", playlistId}, {"name", name}},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::Never);
     return !body.empty() && !checkedResponse(body, outError).empty();
 }
 
@@ -756,7 +989,8 @@ bool navidrome::SubsonicClientWin::deletePlaylist(
         std::string& outError) {
     if (playlistId.empty()) return false;
     const auto body = request(context, "deletePlaylist.view", {{"id", playlistId}},
-                              RequestMethod::Get, outError);
+                              RequestMethod::Get, outError,
+                              RequestRetryPolicy::Never);
     return !body.empty() && !checkedResponse(body, outError).empty();
 }
 
@@ -774,12 +1008,18 @@ bool navidrome::SubsonicClientWin::scrobble(
     const auto body = request(context, "scrobble.view",
                               {{"id", songId},
                                {"submission", submission ? "true" : "false"}},
-                              RequestMethod::Get, outError, profile);
+                              RequestMethod::Get, outError, profile,
+                              RequestRetryPolicy::Never);
     return !body.empty() && !checkedResponse(body, outError).empty();
 }
 
 std::string navidrome::SubsonicClientWin::streamURL(const std::string& songId) {
-    auto context = snapshot();
+    return streamURL(snapshot(), songId);
+}
+
+std::string navidrome::SubsonicClientWin::streamURL(
+        const SubsonicRequestContext& context,
+        const std::string& songId) const {
     return buildURL(context, "stream.view", {{"id", songId}}) +
         streamTranscodeParams(cfg_stream_format.get().c_str(),
                               static_cast<int>(cfg_max_bitrate.get()));
@@ -804,6 +1044,7 @@ std::string navidrome::SubsonicClientWin::coverArtURL(
 bool navidrome::SubsonicClientWin::httpDownloadToFile(
         const SubsonicRequestContext& context, const std::string& urlStr,
         const std::wstring& destPath, std::string& outError) const {
+    TransportFailureKind transportFailure = TransportFailureKind::None;
     const std::wstring url = toWide(urlStr);
     URL_COMPONENTS components = {};
     components.dwStructSize = sizeof(components);
@@ -825,6 +1066,8 @@ bool navidrome::SubsonicClientWin::httpDownloadToFile(
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
+        transportFailure = classifyTransportFailure(GetLastError());
+        tryFailoverAfterTransportFailure(context, transportFailure);
         outError = navidrome::l10n::winHttpOpenFailed;
         return false;
     }
@@ -833,8 +1076,10 @@ bool navidrome::SubsonicClientWin::httpDownloadToFile(
 
     HINTERNET connection = WinHttpConnect(session, host, components.nPort, 0);
     if (!connection) {
+        transportFailure = classifyTransportFailure(GetLastError());
         WinHttpCloseHandle(session);
         outError = navidrome::l10n::connectFailed;
+        tryFailoverAfterTransportFailure(context, transportFailure);
         return false;
     }
 
@@ -846,9 +1091,12 @@ bool navidrome::SubsonicClientWin::httpDownloadToFile(
         requestPath.c_str(), nullptr, WINHTTP_NO_REFERER,
         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!requestHandle) {
+        const DWORD code = GetLastError();
+        transportFailure = classifyTransportFailure(code);
         WinHttpCloseHandle(connection);
         WinHttpCloseHandle(session);
-        outError = navidrome::l10n::requestError(GetLastError());
+        outError = navidrome::l10n::requestError(code);
+        tryFailoverAfterTransportFailure(context, transportFailure);
         return false;
     }
 
@@ -883,7 +1131,9 @@ bool navidrome::SubsonicClientWin::httpDownloadToFile(
                 for (;;) {
                     DWORD available = 0;
                     if (!WinHttpQueryDataAvailable(requestHandle, &available)) {
-                        outError = navidrome::l10n::requestError(GetLastError());
+                        const DWORD code = GetLastError();
+                        transportFailure = classifyTransportFailure(code);
+                        outError = navidrome::l10n::requestError(code);
                         success = false;
                         break;
                     }
@@ -891,7 +1141,9 @@ bool navidrome::SubsonicClientWin::httpDownloadToFile(
                     std::vector<char> buffer(available);
                     DWORD read = 0;
                     if (!WinHttpReadData(requestHandle, buffer.data(), available, &read)) {
-                        outError = navidrome::l10n::requestError(GetLastError());
+                        const DWORD code = GetLastError();
+                        transportFailure = classifyTransportFailure(code);
+                        outError = navidrome::l10n::requestError(code);
                         success = false;
                         break;
                     }
@@ -908,12 +1160,16 @@ bool navidrome::SubsonicClientWin::httpDownloadToFile(
             }
         }
     } else {
-        outError = navidrome::l10n::requestError(GetLastError());
+        const DWORD code = GetLastError();
+        transportFailure = classifyTransportFailure(code);
+        outError = navidrome::l10n::requestError(code);
     }
 
     WinHttpCloseHandle(requestHandle);
     WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
+    if (!success && transportFailure != TransportFailureKind::None)
+        tryFailoverAfterTransportFailure(context, transportFailure);
     return success;
 }
 
@@ -926,27 +1182,58 @@ navidrome::SubsonicClientWin::httpGetBinary(
         const std::string& urlStr,
         std::size_t maxBytes,
         abort_callback& abort) const {
+    TransportFailure failure;
+    auto result = httpGetBinaryOnce(context, urlStr, maxBytes, abort, &failure);
+    if (result.cls != FetchClass::Transport || abort.is_aborting())
+        return result;
+
+    const auto retryContext = tryFailoverAfterTransportFailure(
+        context, failure.kind);
+    if (!retryContext) return result;
+    const auto retryUrl = replaceServerBase(
+        urlStr, context.serverUrl, retryContext->serverUrl);
+    if (retryUrl.empty()) return result;
+    return httpGetBinaryOnce(
+        *retryContext, retryUrl, maxBytes, abort, nullptr);
+}
+
+navidrome::SubsonicClientWin::BinaryFetchResult
+navidrome::SubsonicClientWin::httpGetBinaryOnce(
+        const SubsonicRequestContext& context,
+        const std::string& urlStr,
+        std::size_t maxBytes,
+        abort_callback& abort,
+        TransportFailure* failure) const {
 
     BinaryFetchResult result;
     result.cls = FetchClass::Transport;
     result.httpStatus = 0;
+    if (failure) *failure = {};
 
     std::wstring wurl = toWide(urlStr);
 
     URL_COMPONENTS uc = {};
     uc.dwStructSize = sizeof(uc);
-    wchar_t host[256] = {}, path[4096] = {};
+    wchar_t host[256] = {}, path[4096] = {}, extraInfo[4096] = {};
     uc.lpszHostName = host; uc.dwHostNameLength = 256;
     uc.lpszUrlPath = path; uc.dwUrlPathLength = 4096;
+    uc.lpszExtraInfo = extraInfo; uc.dwExtraInfoLength = 4096;
 
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
+        if (failure) {
+            failure->kind = TransportFailureKind::InvalidUrl;
+            failure->nativeCode = GetLastError();
+        }
         return result; // Transport
     }
 
     HINTERNET hSess = WinHttpOpen(L"foo_navidrome/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSess) return result;
+    if (!hSess) {
+        setTransportFailure(failure, GetLastError());
+        return result;
+    }
 
     WinHttpSetTimeouts(hSess, 0, 15000, 15000, 30000);
     applySecureProtocols(hSess);
@@ -960,15 +1247,19 @@ navidrome::SubsonicClientWin::httpGetBinary(
 
     HINTERNET hConn = WinHttpConnect(hSess, host, uc.nPort, 0);
     if (!hConn) {
+        setTransportFailure(failure, GetLastError());
         WinHttpCloseHandle(hSess);
         return result;
     }
 
     DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path,
+    std::wstring objectName(path, uc.dwUrlPathLength);
+    objectName.append(extraInfo, uc.dwExtraInfoLength);
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", objectName.c_str(),
         nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
 
     if (!hReq) {
+        setTransportFailure(failure, GetLastError());
         WinHttpCloseHandle(hConn);
         WinHttpCloseHandle(hSess);
         return result;
@@ -997,6 +1288,7 @@ navidrome::SubsonicClientWin::httpGetBinary(
 
     if (!WinHttpSendRequest(hReq, nullptr, 0, nullptr, 0, 0, 0) ||
         !WinHttpReceiveResponse(hReq, nullptr)) {
+        setTransportFailure(failure, GetLastError());
         WinHttpCloseHandle(hReq);
         WinHttpCloseHandle(hConn);
         WinHttpCloseHandle(hSess);
@@ -1028,6 +1320,7 @@ navidrome::SubsonicClientWin::httpGetBinary(
         for (;;) {
             DWORD avail = 0;
             if (!WinHttpQueryDataAvailable(hReq, &avail)) {
+                setTransportFailure(failure, GetLastError());
                 readSucceeded = false;
                 break;
             }
@@ -1054,6 +1347,7 @@ navidrome::SubsonicClientWin::httpGetBinary(
             std::vector<uint8_t> chunk(avail);
             DWORD read = 0;
             if (!WinHttpReadData(hReq, chunk.data(), avail, &read)) {
+                setTransportFailure(failure, GetLastError());
                 readSucceeded = false;
                 break;
             }

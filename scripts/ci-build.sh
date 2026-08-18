@@ -55,6 +55,8 @@ xcodebuild \
     -scheme foo_navidrome \
     -configuration Release \
     -derivedDataPath build/derived \
+    ARCHS="arm64 x86_64" \
+    ONLY_ACTIVE_ARCH=NO \
     build > "$LOG" 2>&1
 XCB_RC=$?
 set -e
@@ -87,10 +89,34 @@ if [ ! -d "$COMPONENT" ]; then
 fi
 echo "ci-build: built $COMPONENT"
 
+verify_universal_bundle() {
+    local bundle="$1"
+    local binary="$bundle/Contents/MacOS/${COMPONENT_NAME}"
+    if [ ! -f "$binary" ]; then
+        echo "ERROR: component executable not found at $binary" >&2
+        return 1
+    fi
+
+    local macho_count=0
+    while IFS= read -r -d '' candidate; do
+        if file "$candidate" | grep -q 'Mach-O'; then
+            macho_count=$((macho_count + 1))
+            echo "ci-build: verifying slices for $candidate: $(lipo -archs "$candidate")"
+            lipo -verify_arch arm64 x86_64 "$candidate"
+        fi
+    done < <(find "$bundle" -type f -print0)
+    if [ "$macho_count" -eq 0 ]; then
+        echo "ERROR: no Mach-O binaries found in $bundle" >&2
+        return 1
+    fi
+    codesign --verify --deep --strict --verbose=2 "$bundle"
+}
+
 # ---------------------------------------------------------------------------
 # 4. Ad-hoc sign (foobar2000 rejects unsigned bundles on load)
 # ---------------------------------------------------------------------------
 codesign --sign - --force --deep "$COMPONENT"
+verify_universal_bundle "$COMPONENT"
 
 # ---------------------------------------------------------------------------
 # 5. Package into foo_navidrome_<VERSION>.fb2k-component
@@ -98,11 +124,18 @@ codesign --sign - --force --deep "$COMPONENT"
 # ---------------------------------------------------------------------------
 OUTPUT="${ROOT}/${COMPONENT_NAME}_${VERSION}.fb2k-component"
 TMPDIR_PKG=$(mktemp -d)
-trap 'rm -rf "$TMPDIR_PKG"' EXIT
+VERIFY_DIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_PKG" "$VERIFY_DIR"' EXIT
 
 mkdir -p "$TMPDIR_PKG/mac"
 cp -Rf "$COMPONENT" "$TMPDIR_PKG/mac/"
 
 ditto --noqtn -ck --norsrc "$TMPDIR_PKG" "$OUTPUT"
+
+# Verify the exact archive that semantic-release uploads, not only the build
+# directory that preceded packaging.
+ditto -x -k "$OUTPUT" "$VERIFY_DIR"
+test -f "$VERIFY_DIR/mac/${COMPONENT_NAME}.component/Contents/Info.plist"
+verify_universal_bundle "$VERIFY_DIR/mac/${COMPONENT_NAME}.component"
 
 echo "ci-build: packaged $OUTPUT"

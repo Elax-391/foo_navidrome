@@ -131,7 +131,7 @@ C:\Users\<用户名>\AppData\Roaming\foobar2000-v2\user-components-x64\foo_navid
 
 - Visual Studio 2022
 - **使用 C++ 的桌面开发**工作负载
-- MSVC v143 工具集
+- Visual Studio 中当前可用的 MSVC 工具集（项目会自动采用默认工具集）
 - Windows SDK
 - [reupen/foobar2000-sdk-unmodified](https://github.com/reupen/foobar2000-sdk-unmodified)
 

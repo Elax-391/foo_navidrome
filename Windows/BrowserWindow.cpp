@@ -2,6 +2,7 @@
 #include "BrowserWindow.h"
 #include "BrowserExtrasLogic.h"
 #include "BrowserMutationHub.h"
+#include "ServerConnectionHub.h"
 #include "LibraryImportLogic.h"
 #include "Localization.h"
 #include "SubsonicClientWin.h"
@@ -313,12 +314,20 @@ LRESULT BrowserWindow::OnCreate(LPCREATESTRUCT) {
         [this](const navidrome::BrowserMutationEvent& event) {
             applyMutationEvent(event);
         });
+    m_connectionSubscription = navidrome::ServerConnectionHub::get().subscribe(
+        [dispatch = m_dispatchState](
+                const navidrome::ServerConnectionEvent& event) {
+            if (!dispatch || !dispatch->alive || !dispatch->hwnd) return;
+            ::PostMessageW(dispatch->hwnd, WM_NAVIDROME_CONNECTION_CHANGED,
+                           static_cast<WPARAM>(event.revision), 0);
+        });
     updateActionState();
 
     return 0;
 }
 
 void BrowserWindow::OnDestroy() {
+    m_connectionSubscription.reset();
     m_mutationSubscription.reset();
     if (m_queueCancel) m_queueCancel->store(true);
     ++m_queueOperationId;
@@ -349,6 +358,39 @@ void BrowserWindow::OnDestroy() {
     m_confirmedMutations.clear();
     m_appliedMutationRevisions.clear();
     m_mutationIdentity.clear();
+}
+
+LRESULT BrowserWindow::OnConnectionChanged(UINT, WPARAM wParam, LPARAM, BOOL&) {
+    const auto revision = static_cast<std::uint64_t>(wParam);
+    if (revision <= m_connectionRevision) return 0;
+    m_connectionRevision = revision;
+
+    // Reject every response captured under the previous account. Existing
+    // background work may finish, but its generation/request id can no longer
+    // mutate this tree or commit an operation against the new account.
+    if (m_queueCancel) m_queueCancel->store(true);
+    ++m_queueOperationId;
+    ++m_mutationOperationId;
+    ++m_playlistOperationId;
+    ++m_downloadOperationId;
+    ++m_playlistMutationOperationId;
+    ++m_libraryRequestId;
+    ++m_searchRequestId;
+    ++m_displayGeneration;
+    m_queueInProgress = false;
+    m_mutationInProgress = false;
+    m_playlistInProgress = false;
+    m_downloadInProgress = false;
+    m_playlistMutationInProgress = false;
+    m_queueCancel.reset();
+    m_deferredChildren.clear();
+    m_deferredMutationEvents.clear();
+    m_confirmedMutations.clear();
+    m_appliedMutationRevisions.clear();
+    m_mutationIdentity.clear();
+    setStatus(navidrome::l10n::accountChangedRefreshing);
+    loadArtists();
+    return 0;
 }
 
 void BrowserWindow::OnGetMinMaxInfo(LPMINMAXINFO info) {

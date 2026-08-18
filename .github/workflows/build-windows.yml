@@ -1,10 +1,7 @@
 name: Build Windows
 
-# Builds the Windows foo_navidrome.dll for x64 + x86 (Win32) + ARM64EC and
-# packages them into a single .fb2k-component (x86 at the zip root, x64 under
-# x64/, ARM64EC under arm64ec/ — the layout foobar2000 v2 expects). foobar2000
-# on ARM prefers the native arm64ec/ binary; if it's absent it falls back to
-# running x64 via emulation. Two entry points:
+# Builds Windows Win32, x64, and ARM64EC DLLs and packages them in the
+# foobar2000 v2 multi-architecture layout. Two entry points:
 #
 #   * workflow_call  — invoked by release.yml to attach the component to a
 #                      GitHub release (caller passes the tag ref + version).
@@ -13,7 +10,7 @@ name: Build Windows
 #                      local Wine foobar2000 without cutting a release.
 #
 # Either way the job uploads a `windows-component` artifact containing the
-# packaged .fb2k-component plus the raw x86 (root) and x64/ DLLs.
+# packaged .fb2k-component plus all three raw DLLs.
 
 on:
   workflow_call:
@@ -45,7 +42,8 @@ on:
 
 jobs:
   build:
-    # windows-2022 ships VS 2022 (v143) with the ATL/MFC component preinstalled.
+    # windows-2022 ships a supported Visual Studio toolset with the ATL/MFC
+    # component preinstalled.
     # windows-latest moved to VS 2026, which has no ATL — building there meant a
     # slow `vs_installer modify` on every run. Pinning to windows-2022 gets ATL
     # for free; WTL (atlapp.h, not in any VS image) is vendored in the repo.
@@ -69,6 +67,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: reupen/foobar2000-sdk-unmodified
+          ref: 5fb30e4cf97d03edafc214febfb5e30597015b38
           path: _sdk-staging
 
       - name: Move SDK subdirs into the expected sibling layout
@@ -150,6 +149,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $sln = "$PWD\"
+          $toolsetProbe = msbuild Windows\tests\ServerProfilesTests.vcxproj `
+            /getProperty:DefaultPlatformToolset `
+            /p:Configuration=Release /p:Platform=x64 /nologo
+          $toolset = ($toolsetProbe | Select-Object -Last 1).ToString().Trim()
+          if ([string]::IsNullOrWhiteSpace($toolset)) { Write-Error "Unable to resolve the installed MSVC toolset"; exit 1 }
+          Write-Host "Using default MSVC toolset: $toolset"
           # Standalone test executables are emitted under test-out while the
           # SDK's shared runtime outputs are under x64\Release. Keep that
           # directory discoverable even when a test is launched outside the
@@ -161,7 +166,7 @@ jobs:
           msbuild Windows\foo_navidrome.vcxproj `
             /p:Configuration=Release `
             /p:Platform=x64 `
-            /p:PlatformToolset=v143 `
+            /p:PlatformToolset=$toolset `
             /p:SolutionDir=$sln `
             /m /nologo /v:minimal
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -171,7 +176,8 @@ jobs:
             @{ Project = 'Windows\tests\LibraryImportTests.vcxproj';   Exe = 'LibraryImportTests.exe' },
             @{ Project = 'Windows\tests\SubsonicExtrasTests.vcxproj';  Exe = 'SubsonicExtrasTests.exe' },
             @{ Project = 'Windows\tests\BrowserExtrasTests.vcxproj';   Exe = 'BrowserExtrasTests.exe' },
-            @{ Project = 'Windows\tests\ScrobbleTests.vcxproj';        Exe = 'ScrobbleTests.exe' }
+            @{ Project = 'Windows\tests\ScrobbleTests.vcxproj';        Exe = 'ScrobbleTests.exe' },
+            @{ Project = 'Windows\tests\ServerProfilesTests.vcxproj';  Exe = 'ServerProfilesTests.exe' }
           )
           foreach ($test in $tests) {
             $name = [IO.Path]::GetFileNameWithoutExtension($test.Project)
@@ -179,7 +185,7 @@ jobs:
             msbuild $test.Project `
               /p:Configuration=Release `
               /p:Platform=x64 `
-              /p:PlatformToolset=v143 `
+              /p:PlatformToolset=$toolset `
               /p:SolutionDir=$sln `
               /p:OutDir=$out `
               /m /nologo /v:minimal
@@ -195,7 +201,7 @@ jobs:
             if ($process.ExitCode -ne 0) { exit $process.ExitCode }
           }
 
-      - name: Build Release (x64 + Win32)
+      - name: Build Release (Win32 + x64 + ARM64EC)
         shell: pwsh
         working-directory: foobar2000/foo_navidrome
         run: |
@@ -203,45 +209,100 @@ jobs:
           $sln = "$PWD\"
           $log = "$env:RUNNER_TEMP\msbuild.log"
           $dist = "$PWD\dist"
-          # .fb2k-component arch layout: 32-bit (x86) DLL at the zip root,
-          # 64-bit under x64/, native Windows-on-ARM under arm64ec/. Build each
-          # arch into its own OutDir so the foo_navidrome.dll don't clobber each
-          # other.
-          # arm64ec/ is the native Windows-on-ARM binary; foobar2000 prefers it
-          # over the x64 one on ARM (x64 otherwise runs via emulation). The
-          # windows-2022 image ships the v143 ARM64 tools + ATL ARM64, and the
-          # SDK projects already define Release|ARM64EC, so no extra setup.
+
+          function Resolve-PlatformToolset {
+            param([Parameter(Mandatory = $true)][string]$Platform)
+
+            $toolsetProbe = msbuild Windows\foo_navidrome.vcxproj `
+              /getProperty:DefaultPlatformToolset `
+              /p:Configuration=Release /p:Platform=$Platform /nologo
+            $toolset = ($toolsetProbe | Select-Object -Last 1).ToString().Trim()
+            if ([string]::IsNullOrWhiteSpace($toolset)) {
+              throw "Unable to resolve the default MSVC toolset for $Platform"
+            }
+
+            $toolsProbe = msbuild Windows\foo_navidrome.vcxproj `
+              /getProperty:VCToolsInstallDir `
+              /p:Configuration=Release /p:Platform=$Platform `
+              /p:PlatformToolset=$toolset /nologo
+            $toolsDir = ($toolsProbe | Select-Object -Last 1).ToString().Trim()
+            if ([string]::IsNullOrWhiteSpace($toolsDir)) {
+              throw "Unable to resolve VCToolsInstallDir for $Platform ($toolset)"
+            }
+
+            $compilerTarget = switch ($Platform) {
+              'Win32' { 'x86' }
+              'x64' { 'x64' }
+              'ARM64EC' { 'arm64' }
+              default { throw "Unsupported target platform: $Platform" }
+            }
+            $compiler = Join-Path $toolsDir "bin\Hostx64\$compilerTarget\cl.exe"
+            if (-not (Test-Path -LiteralPath $compiler)) {
+              throw "MSVC compiler for $Platform is missing: $compiler. Install the matching C++ build tools component."
+            }
+
+            Write-Host "Using $toolset for $Platform ($compiler)"
+            return $toolset
+          }
+
+          function Assert-PeMachine {
+            param(
+              [Parameter(Mandatory = $true)][string]$Path,
+              [Parameter(Mandatory = $true)][UInt16]$Expected,
+              [Parameter(Mandatory = $true)][string]$Platform
+            )
+            $stream = [System.IO.File]::OpenRead($Path)
+            $reader = [System.IO.BinaryReader]::new($stream)
+            try {
+              if ($reader.ReadUInt16() -ne 0x5A4D) { throw "$Platform output is not a PE file: $Path" }
+              $stream.Position = 0x3C
+              $peOffset = $reader.ReadInt32()
+              if ($peOffset -lt 0 -or $peOffset -gt ($stream.Length - 6)) { throw "$Platform output has an invalid PE offset: $Path" }
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) { throw "$Platform output has an invalid PE signature: $Path" }
+              $actual = $reader.ReadUInt16()
+            } finally {
+              $reader.Dispose()
+              $stream.Dispose()
+            }
+            if ($actual -ne $Expected) {
+              throw ("{0} PE machine mismatch: expected 0x{1:X4}, got 0x{2:X4}" -f $Platform, $Expected, $actual)
+            }
+            Write-Host ("verified {0} PE machine 0x{1:X4}: {2}" -f $Platform, $actual, $Path)
+          }
+
           $targets = @(
-            @{ Platform = 'x64';     ZipSub = 'x64'     },
-            @{ Platform = 'ARM64EC'; ZipSub = 'arm64ec' },
-            @{ Platform = 'Win32';   ZipSub = ''        }
+            @{ Platform = 'Win32';   ZipSub = '';        Machine = [UInt16]0x014C },
+            @{ Platform = 'x64';     ZipSub = 'x64';     Machine = [UInt16]0x8664 },
+            @{ Platform = 'ARM64EC'; ZipSub = 'arm64ec'; Machine = [UInt16]0xA641 }
           )
-          foreach ($t in $targets) {
-            $out = "$PWD\out\$($t.Platform)\"
-            # Retarget every project to v143 — the SDK projects pin v142 (VS
-            # 2019), which windows-2022 no longer ships, while ATL is
-            # preinstalled for v143. A global override unifies the SDK projects
-            # and ours onto the one toolset present with ATL.
+          foreach ($target in $targets) {
+            $platform = $target.Platform
+            $platformToolset = Resolve-PlatformToolset -Platform $platform
+            $out = "$PWD\out\$platform\"
+            # Retarget all project references to the platform's installed
+            # default toolset. The repository itself does not pin v143/v145.
             msbuild Windows\foo_navidrome.vcxproj `
               /p:Configuration=Release `
-              /p:Platform=$($t.Platform) `
-              /p:PlatformToolset=v143 `
+              /p:Platform=$platform `
+              /p:PlatformToolset=$platformToolset `
               /p:SolutionDir=$sln `
               /p:OutDir=$out `
               /m /nologo /v:minimal `
               /flp:"logfile=$log;verbosity=detailed;append" `
               "/clp:ErrorsOnly;Summary"
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "===== MSBuild FAILED for $($t.Platform) (rc=$LASTEXITCODE) — error lines ====="
+              Write-Host "===== MSBuild FAILED for $platform (rc=$LASTEXITCODE) — error lines ====="
               if (Test-Path $log) { Select-String -Path $log -Pattern 'error|fatal' | Select-Object -Last 60 | ForEach-Object { $_.Line } }
               exit $LASTEXITCODE
             }
             $dll = "$out\foo_navidrome.dll"
-            if (-not (Test-Path $dll)) { Write-Error "foo_navidrome.dll not found for $($t.Platform) at $dll"; exit 1 }
-            $destDir = if ($t.ZipSub) { "$dist\$($t.ZipSub)" } else { $dist }
+            if (-not (Test-Path -LiteralPath $dll)) { Write-Error "foo_navidrome.dll not found for $platform at $dll"; exit 1 }
+            Assert-PeMachine -Path $dll -Expected $target.Machine -Platform $platform
+            $destDir = if ($target.ZipSub) { "$dist\$($target.ZipSub)" } else { $dist }
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-            Copy-Item $dll "$destDir\foo_navidrome.dll" -Force
-            Write-Host "built $($t.Platform) -> $destDir\foo_navidrome.dll"
+            Copy-Item -LiteralPath $dll -Destination "$destDir\foo_navidrome.dll" -Force
+            Write-Host "built $platform -> $destDir\foo_navidrome.dll"
           }
 
       - name: Upload msbuild log on failure
@@ -253,9 +314,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # foobar2000 v2 .fb2k-component layout: 32-bit (x86) DLL at the zip root,
-      # 64-bit under x64/, ARM64EC under arm64ec/ (mac/ carries the macOS bundle,
-      # added by the release merge step). Package all Windows arches into one zip.
+      # The Windows-only component contains exactly the three architecture DLLs.
       - name: Package .fb2k-component
         id: pkg
         shell: pwsh
@@ -265,17 +324,26 @@ jobs:
           $dist = "$PWD\dist"
           $asset = "foo_navidrome_win_$env:VERSION.fb2k-component"
           $zip = "$dist\$asset"
-          # Archive the root x86 DLL plus the x64/ subfolder; rename the .zip to
-          # .fb2k-component.
           Compress-Archive -Path "$dist\foo_navidrome.dll","$dist\x64","$dist\arm64ec" -DestinationPath "$dist\_tmp.zip" -Force
           Move-Item "$dist\_tmp.zip" $zip -Force
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
+            $expected = @('arm64ec/foo_navidrome.dll', 'foo_navidrome.dll', 'x64/foo_navidrome.dll')
+            $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $entries)
+            if ($entries.Count -ne 3 -or $difference.Count -ne 0) {
+              Write-Error "Unexpected component entries: $($entries -join ', ')"
+              exit 1
+            }
+          } finally {
+            $archive.Dispose()
+          }
           "asset_name=$asset"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "artifact_name=windows-component" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "packaged: $zip"
 
-      # Upload both the packaged component and the raw DLLs so consumers can
-      # pick: release.yml's merge step grabs the raw x86 + x64 DLLs; win-test.sh
-      # drops the x64 DLL straight into the Wine user-components dir.
+      # Upload the package and raw DLLs for release merge and direct testing.
       - name: Upload component artifact
         uses: actions/upload-artifact@v6
         with:

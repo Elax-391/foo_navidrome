@@ -53,46 +53,54 @@ public:
     }
 
     void decode_initialize(unsigned p_flags, abort_callback& p_abort) {
-        std::string url = navidrome::SubsonicClientWin::get().streamURL(m_song_id);
+        auto& client = navidrome::SubsonicClientWin::get();
+        m_context = client.snapshot();
+        m_transportFailureReported = false;
+        std::string url = client.streamURL(m_context, m_song_id);
         if (url.empty()) throw exception_io_data();
         m_resolved_url = url.c_str();
 
-        // When custom headers are configured, open the stream ourselves so the
-        // headers ride along; otherwise hand a null file and let foobar open the
-        // URL (preserving the original Content-Type-based decoder selection).
-        file::ptr httpFile;
-        auto headers = navidrome::SubsonicClientWin::customHeaderLines();
-        if (!headers.empty()) {
-            http_request::ptr req = http_client::get()->create_request("GET");
-            for (const auto& h : headers) req->add_header(h.c_str());
-            httpFile = req->run(url.c_str(), p_abort);
-        }
+        withRouteFailure([&]() {
+            // When custom headers are configured, open the stream ourselves so
+            // the headers ride along; otherwise foobar opens the URL directly.
+            file::ptr httpFile;
+            const auto headers = navidrome::parseHeaderLines(
+                m_context.customHeaders);
+            if (!headers.empty()) {
+                http_request::ptr req = http_client::get()->create_request("GET");
+                for (const auto& h : headers) req->add_header(h.c_str());
+                httpFile = req->run(url.c_str(), p_abort);
+            }
 
-        // Our own file has no audio extension in the URL, so give the decoder a
-        // suffix-based hint (track.<suffix>) to pick the codec; it still reads
-        // bytes from httpFile, not from the hint path.
-        const char* hint = m_resolved_url.c_str();
-        pfc::string8 hintBuf;
-        const std::string decoderSuffix = navidrome::effectiveStreamSuffix(
-            navidrome::cfg_stream_format.get().c_str(),
-            navidrome::effectiveCodec(m_song));
-        if (httpFile.is_valid() && !decoderSuffix.empty()) {
-            hintBuf << "track." << decoderSuffix.c_str();
-            hint = hintBuf.c_str();
-        }
+            // Our own file has no audio extension in the URL, so give the
+            // decoder a suffix-based hint while it reads from httpFile.
+            const char* hint = m_resolved_url.c_str();
+            pfc::string8 hintBuf;
+            const std::string decoderSuffix = navidrome::effectiveStreamSuffix(
+                navidrome::cfg_stream_format.get().c_str(),
+                navidrome::effectiveCodec(m_song));
+            if (httpFile.is_valid() && !decoderSuffix.empty()) {
+                hintBuf << "track." << decoderSuffix.c_str();
+                hint = hintBuf.c_str();
+            }
 
-        input_entry::g_open_for_decoding(m_decoder, httpFile, hint, p_abort, true);
-        if (m_decoder.is_empty()) throw exception_io_data();
-        m_decoder->initialize(0, p_flags, p_abort);
-        m_decoderInfo.reset();
-        try { m_decoder->get_info(0, m_decoderInfo, p_abort); }
-        catch (...) { m_decoderInfo.reset(); }
+            input_entry::g_open_for_decoding(
+                m_decoder, httpFile, hint, p_abort, true);
+            if (m_decoder.is_empty()) throw exception_io_data();
+            m_decoder->initialize(0, p_flags, p_abort);
+            m_decoderInfo.reset();
+            try { m_decoder->get_info(0, m_decoderInfo, p_abort); }
+            catch (...) { m_decoderInfo.reset(); }
+        });
         m_streamSpec.clear();
         m_streamInfoDirty = false;
     }
 
     bool decode_run(audio_chunk& chunk, abort_callback& abort) {
-        if (!m_decoder.is_valid() || !m_decoder->run(chunk, abort)) return false;
+        if (!m_decoder.is_valid()) return false;
+        const bool decoded = withRouteFailure(
+            [&]() { return m_decoder->run(chunk, abort); });
+        if (!decoded) return false;
         const auto spec = chunk.get_spec();
         if (spec.is_valid() && spec != m_streamSpec) {
             m_streamSpec = spec;
@@ -102,7 +110,8 @@ public:
         return true;
     }
     void decode_seek(double s, abort_callback& abort) {
-        if (m_decoder.is_valid()) m_decoder->seek(s, abort);
+        if (m_decoder.is_valid())
+            withRouteFailure([&]() { m_decoder->seek(s, abort); });
     }
     bool decode_can_seek() { return m_decoder.is_valid() && m_decoder->can_seek(); }
     bool decode_get_dynamic_info(file_info& out, double& delta) {
@@ -119,7 +128,8 @@ public:
         return true;
     }
     void decode_on_idle(abort_callback& abort) {
-        if (m_decoder.is_valid()) m_decoder->on_idle(abort);
+        if (m_decoder.is_valid())
+            withRouteFailure([&]() { m_decoder->on_idle(abort); });
     }
 
     void retag(const file_info&, abort_callback&) { throw exception_tagging_unsupported(); }
@@ -139,6 +149,33 @@ public:
     static const char* g_get_name() { return "Navidrome"; }
 
 private:
+    template<typename Callable>
+    decltype(auto) withRouteFailure(Callable&& callable) {
+        try {
+            return callable();
+        } catch (const exception_io_net_security&) {
+            // This also includes certificate validation failures, which must
+            // not select a different route automatically.
+            throw;
+        } catch (const exception_io_dns&) {
+            reportRouteFailure(navidrome::TransportFailureKind::Resolve);
+            throw;
+        } catch (const exception_io_network_not_reachable&) {
+            reportRouteFailure(navidrome::TransportFailureKind::Connect);
+            throw;
+        } catch (const exception_io_net&) {
+            reportRouteFailure(navidrome::TransportFailureKind::Connect);
+            throw;
+        }
+    }
+
+    void reportRouteFailure(navidrome::TransportFailureKind failure) {
+        if (m_transportFailureReported) return;
+        m_transportFailureReported = true;
+        navidrome::SubsonicClientWin::get()
+            .tryFailoverAfterTransportFailure(m_context, failure);
+    }
+
     void parse_uri(const char* uri) {
         if (navidrome::parseTrackURI(uri, m_song)) m_song_id = m_song.id;
     }
@@ -155,10 +192,12 @@ private:
 
     std::string m_path, m_song_id;
     navidrome::Song m_song;
+    navidrome::SubsonicRequestContext m_context;
     pfc::string8 m_resolved_url;
     file_info_impl m_decoderInfo;
     audio_chunk::spec_t m_streamSpec;
     bool m_streamInfoDirty = false;
+    bool m_transportFailureReported = false;
     service_ptr_t<input_decoder> m_decoder;
 };
 

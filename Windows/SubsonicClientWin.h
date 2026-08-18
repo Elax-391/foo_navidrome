@@ -1,6 +1,7 @@
 #pragma once
 #include "../SubsonicTypes.h"
 #include "MediaEnrichmentLogic.h"
+#include "ServerRouteRuntime.h"
 #include "SubsonicRequestLogic.h"
 #include <optional>
 #include <string>
@@ -15,6 +16,35 @@ struct SubsonicRequestContext {
     std::string password;
     std::string salt;
     std::string customHeaders;
+    std::uint64_t routePlanRevision = 0;
+    std::string profileId;
+    std::string preferredRouteId;
+    std::string effectiveRouteId;
+    bool autoFailover = false;
+    std::vector<RouteCandidate> routeCandidates;
+};
+
+enum class TransportFailureKind {
+    None,
+    InvalidUrl,
+    Resolve,
+    Connect,
+    Timeout,
+    TlsHandshake,
+    HttpResponse,
+    Cancelled,
+    Other,
+};
+
+struct TransportFailure {
+    TransportFailureKind kind = TransportFailureKind::None;
+    unsigned long nativeCode = 0;
+    std::uint32_t httpStatus = 0;
+};
+
+enum class RequestRetryPolicy {
+    Never,
+    SafeRead,
 };
 
 // Windows Subsonic API client (WinHTTP-based).
@@ -27,6 +57,9 @@ public:
     SubsonicRequestContext snapshot() const;
     bool ping(std::string& outError);
     bool ping(const SubsonicRequestContext& context, std::string& outError);
+    std::optional<SubsonicRequestContext> tryFailoverAfterTransportFailure(
+        const SubsonicRequestContext& context,
+        TransportFailureKind failure) const;
 
     ServerInfo getServerInfo(const SubsonicRequestContext& context, std::string& outError);
     std::vector<MusicFolder> getMusicFolders(const SubsonicRequestContext& context,
@@ -97,6 +130,8 @@ public:
                   bool submission, std::string& outError);
 
     std::string streamURL(const std::string& songId);
+    std::string streamURL(const SubsonicRequestContext& context,
+                          const std::string& songId) const;
     std::string downloadURL(const SubsonicRequestContext& context,
                             const std::string& songId) const;
     std::string coverArtURL(const std::string& id, int size = 0);
@@ -150,18 +185,27 @@ private:
     std::string request(const SubsonicRequestContext& context,
                         const std::string& endpoint,
                         const OrderedParameters& parameters,
-                        RequestMethod method, std::string& outError) const;
+                        RequestMethod method, std::string& outError,
+                        RequestRetryPolicy retryPolicy =
+                            RequestRetryPolicy::Never) const;
     std::string request(const SubsonicRequestContext& context,
                         const std::string& endpoint,
                         const OrderedParameters& parameters,
                         RequestMethod method, std::string& outError,
-                        const HttpRequestProfile& profile) const;
+                        const HttpRequestProfile& profile,
+                        RequestRetryPolicy retryPolicy =
+                            RequestRetryPolicy::Never) const;
     // Synchronous HTTP GET; returns body or "" on error (sets outError).
     std::string httpRequest(const SubsonicRequestContext& context,
                             const std::string& url, RequestMethod method,
                             const std::string& body,
                             std::string& outError,
-                            const HttpRequestProfile& profile) const;
+                            const HttpRequestProfile& profile,
+                            TransportFailure* failure = nullptr) const;
+    BinaryFetchResult httpGetBinaryOnce(
+        const SubsonicRequestContext& context, const std::string& url,
+        std::size_t maxBytes, class abort_callback& abort,
+        TransportFailure* failure) const;
 };
 
 } // namespace navidrome

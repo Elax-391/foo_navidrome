@@ -3,6 +3,7 @@
 #include "../SubsonicTypes.h"
 #include "BrowserExtrasLogic.h"
 #include "BrowserMutationHub.h"
+#include "ServerConnectionHub.h"
 #include "LibraryImporter.h"
 #include "SubsonicClientWin.h"
 #include <map>
@@ -25,6 +26,7 @@
 #define WM_NAVIDROME_PLAYLIST_COMPLETE (WM_USER + 109)
 #define WM_NAVIDROME_DOWNLOAD_COMPLETE (WM_USER + 110)
 #define WM_NAVIDROME_SERVER_PLAYLIST_COMPLETE (WM_USER + 111)
+#define WM_NAVIDROME_CONNECTION_CHANGED (WM_USER + 112)
 
 // ---------------------------------------------------------------------------
 // Tree node
@@ -199,6 +201,7 @@ public:
         MESSAGE_HANDLER(WM_NAVIDROME_PLAYLIST_COMPLETE, OnPlaylistComplete)
         MESSAGE_HANDLER(WM_NAVIDROME_DOWNLOAD_COMPLETE, OnDownloadComplete)
         MESSAGE_HANDLER(WM_NAVIDROME_SERVER_PLAYLIST_COMPLETE, OnServerPlaylistComplete)
+        MESSAGE_HANDLER(WM_NAVIDROME_CONNECTION_CHANGED, OnConnectionChanged)
         NOTIFY_CODE_HANDLER_EX(TVN_ITEMEXPANDING, OnTreeExpanding)
         NOTIFY_CODE_HANDLER_EX(NM_DBLCLK,        OnTreeDblClick)
         NOTIFY_CODE_HANDLER_EX(NM_RETURN,        OnTreeReturn)
@@ -251,6 +254,7 @@ private:
     LRESULT OnPlaylistComplete(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnDownloadComplete(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnServerPlaylistComplete(UINT, WPARAM, LPARAM, BOOL&);
+    LRESULT OnConnectionChanged(UINT, WPARAM, LPARAM, BOOL&);
     LRESULT OnTreeExpanding(LPNMHDR);
     LRESULT OnTreeDblClick(LPNMHDR);
     LRESULT OnTreeReturn(LPNMHDR);
@@ -368,6 +372,8 @@ private:
     std::string   m_searchQuery;
     std::string   m_mutationIdentity;
     navidrome::BrowserMutationSubscription m_mutationSubscription;
+    navidrome::ServerConnectionSubscription m_connectionSubscription;
+    std::uint64_t m_connectionRevision = 0;
     std::map<std::string, navidrome::BrowserMutationEvent> m_confirmedMutations;
     std::map<std::string, std::uint64_t> m_appliedMutationRevisions;
     bool          m_libraryLoading = false;

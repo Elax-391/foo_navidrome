@@ -15,11 +15,57 @@ inline constexpr wchar_t save[] = L"保存";
 inline constexpr wchar_t cancel[] = L"取消";
 
 inline constexpr wchar_t serverUrl[] = L"服务器 URL：";
+inline constexpr wchar_t serverProfile[] = L"服务器档案：";
+inline constexpr wchar_t profileName[] = L"档案名称：";
+inline constexpr wchar_t serverRoute[] = L"连接线路：";
+inline constexpr wchar_t routeOne[] = L"线路一";
+inline constexpr wchar_t routeTwo[] = L"线路二";
+inline constexpr wchar_t routeThree[] = L"线路三";
+inline constexpr wchar_t routeFour[] = L"线路四";
+inline constexpr wchar_t routeFive[] = L"线路五";
+inline constexpr wchar_t routeSix[] = L"线路六";
+inline constexpr wchar_t routeSeven[] = L"线路七";
+inline constexpr wchar_t routeEight[] = L"线路八";
+inline constexpr wchar_t addRoute[] = L"新增线路";
+inline constexpr wchar_t deleteRoute[] = L"删除线路";
+inline constexpr wchar_t moveRouteUp[] = L"上移";
+inline constexpr wchar_t moveRouteDown[] = L"下移";
+inline constexpr wchar_t automaticFailover[] = L"网络失败时自动切换备用线路";
+inline constexpr wchar_t routeLimitReached[] = L"每个档案最多保存八条线路";
+inline constexpr wchar_t routeLastDeleteBlocked[] = L"至少要保留一条线路";
+inline constexpr wchar_t routeUrlTestRequired[] = L"请先填写该线路的 URL";
+inline constexpr wchar_t routeStatusIdle[] = L"首选和当前线路一致";
+inline constexpr wchar_t automaticSwitchReason[] = L"网络故障后自动切换";
+inline constexpr wchar_t addProfile[] = L"新增";
+inline constexpr wchar_t cancelAddProfile[] = L"取消新增";
+inline constexpr wchar_t saveProfile[] = L"保存档案";
+inline constexpr wchar_t deleteProfile[] = L"删除";
+inline constexpr wchar_t deleteProfileTitle[] = L"删除服务器档案";
+inline constexpr wchar_t deleteProfileConfirm[] =
+    L"确定删除当前服务器档案吗？此操作会立即保存。";
+inline constexpr wchar_t newProfileHint[] =
+    L"请填写完整档案，然后点击“保存档案”立即启用。";
+inline constexpr wchar_t profileSaved[] = L"服务器档案已保存";
+inline constexpr wchar_t profileInvalid[] = L"服务器档案无效";
+inline constexpr wchar_t profileNameRequired[] = L"请输入档案名称";
+inline constexpr wchar_t profileNameDuplicate[] = L"档案名称不能重复";
+inline constexpr wchar_t profileUrlRequired[] = L"当前线路的 URL 不能为空";
+inline constexpr wchar_t profileCredentialsRequired[] =
+    L"新增档案必须填写用户名和密码";
+inline constexpr wchar_t profileLastDeleteBlocked[] = L"至少要保留一个服务器档案";
+inline constexpr wchar_t profilePersistenceFailed[] = L"无法保存服务器档案";
+inline constexpr wchar_t profileRecoveredWarning[] =
+    L"档案配置损坏，已临时恢复旧版设置；下次应用将修复配置。";
 inline constexpr wchar_t username[] = L"用户名：";
 inline constexpr wchar_t password[] = L"密码：";
 inline constexpr wchar_t testConnection[] = L"测试连接";
+inline constexpr wchar_t testRoute[] = L"测试";
 inline constexpr wchar_t testing[] = L"测试中…";
 inline constexpr wchar_t connected[] = L"已连接！";
+inline constexpr wchar_t saveAndSwitchRouteTitle[] = L"保存并切换线路";
+inline constexpr wchar_t saveAndSwitchRoutePrompt[] =
+    L"这条线路的地址或登录信息尚未应用。\n\n"
+    L"是否保存当前档案的编辑并切换到这条线路？";
 inline constexpr char failedUtf8[] = u8"失败";
 inline constexpr wchar_t customHeaders[] = L"自定义请求头…";
 inline constexpr wchar_t reportPlays[] = L"向 Navidrome 汇报播放记录（Scrobble）";

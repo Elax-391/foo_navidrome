@@ -70,6 +70,7 @@ jobs:
           # mirror; it includes helpers-mac/ which marc2k3/foobar2000-sdk
           # (aka javascript-panel/foobar2000-sdk via redirect) does not ship.
           repository: reupen/foobar2000-sdk-unmodified
+          ref: 5fb30e4cf97d03edafc214febfb5e30597015b38
           path: _sdk-staging
 
       - name: Move SDK subdirs into the expected sibling layout
@@ -147,18 +148,15 @@ jobs:
           retention-days: 7
 
   # --------------------------------------------------------------------------
-  # Windows x86 + x64 + ARM64EC binaries, MERGED into one multi-platform
-  # .fb2k-component.
+  # Windows Win32/x64/ARM64EC binaries, merged with the universal macOS bundle
+  # into one multi-platform .fb2k-component.
   #
   # The actual build lives in the reusable build-windows.yml workflow (also
   # dispatchable on its own for local test builds via win-test.sh). Here we
   # call it for the tag semantic-release just created, then merge-component
   # folds its Windows DLLs into the macOS zip semantic-release already attached,
   # so the release ships ONE foo_navidrome_<ver>.fb2k-component that runs on
-  # macOS, Windows x86, Windows x64, and natively on Windows ARM (the layout
-  # official components use: mac/<bundle> + <x86 dll at root> + x64/<dll> +
-  # arm64ec/<dll> in the same zip; foobar picks the right binary at load time,
-  # preferring arm64ec/ on ARM and falling back to x64 emulation if absent).
+  # macOS arm64/x86_64 and Windows Win32/x64/ARM64EC.
   #
   # Both jobs are gated on released_version, so they no-op when no release was
   # published. They are NON-GATING for the release itself: the macOS asset has
@@ -184,7 +182,7 @@ jobs:
           name: ${{ needs.build-windows.outputs.artifact-name }}
           path: dist
 
-      - name: Merge mac bundle + win-x64 DLL into one .fb2k-component
+      - name: Merge macOS and Windows binaries into one .fb2k-component
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.release.outputs.released_version }}
@@ -199,9 +197,7 @@ jobs:
             --pattern "$ASSET" \
             --dir .
 
-          # The win artifact ships the raw DLLs at dist/foo_navidrome.dll (x86),
-          # dist/x64/foo_navidrome.dll (x64) and dist/arm64ec/foo_navidrome.dll
-          # (native Windows-on-ARM) — see build-windows.yml.
+          # The Windows artifact ships the raw architecture-specific DLLs.
           test -f dist/foo_navidrome.dll
           test -f dist/x64/foo_navidrome.dll
           test -f dist/arm64ec/foo_navidrome.dll
@@ -210,19 +206,39 @@ jobs:
           cp dist/x64/foo_navidrome.dll x64/foo_navidrome.dll
           cp dist/arm64ec/foo_navidrome.dll arm64ec/foo_navidrome.dll
 
-          # Grow the existing zip with the Windows entries: x86 DLL at the root,
-          # x64 DLL under x64/, native ARM DLL under arm64ec/ (foobar2000 on ARM
-          # prefers arm64ec/, else runs x64 via emulation). `zip -g` appends
-          # without rewriting the mac/ entries, so the macOS bundle's bytes (and
-          # its ad-hoc code signature) stay byte-for-byte intact.
+          # Append the Windows DLLs without rewriting the mac/ entries, keeping
+          # the universal macOS bundle and signature byte-for-byte intact.
           zip -g "$ASSET" foo_navidrome.dll x64/foo_navidrome.dll arm64ec/foo_navidrome.dll
+
+          # Validate the actual release asset. Required architecture entries
+          # must each appear exactly once and archive paths must be safe.
+          mapfile -t entries < <(unzip -Z1 "$ASSET")
+          printf '%s\n' "${entries[@]}"
+          required=(
+            "mac/foo_navidrome.component/Contents/Info.plist"
+            "mac/foo_navidrome.component/Contents/MacOS/foo_navidrome"
+            "foo_navidrome.dll"
+            "x64/foo_navidrome.dll"
+            "arm64ec/foo_navidrome.dll"
+          )
+          for entry in "${required[@]}"; do
+            count=$(printf '%s\n' "${entries[@]}" | grep -Fxc "$entry" || true)
+            if [ "$count" -ne 1 ]; then
+              echo "ERROR: expected exactly one '$entry', found $count" >&2
+              exit 1
+            fi
+          done
+          if printf '%s\n' "${entries[@]}" | grep -Eq '(^/|(^|/)\.\.(/|$)|^__MACOSX/)'; then
+            echo "ERROR: unsafe or metadata-only path found in release archive" >&2
+            exit 1
+          fi
           echo "merged multi-platform component contents:"
           unzip -l "$ASSET"
 
           # Replace the mac-only asset with the merged one (same filename), and
           # relabel it to reflect multi-platform support.
           gh release upload "v${VERSION}" \
-            "${ASSET}#foo_navidrome ${VERSION} (macOS + Windows x86/x64/ARM64)" \
+            "${ASSET}#foo_navidrome ${VERSION} (macOS universal + Windows Win32/x64/ARM64EC)" \
             --clobber --repo "$GITHUB_REPOSITORY"
           echo "uploaded multi-platform $ASSET to release v${VERSION}"
 
